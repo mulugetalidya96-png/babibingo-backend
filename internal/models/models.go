@@ -1,6 +1,9 @@
 package models
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -60,6 +63,23 @@ type CardJSON struct {
 	G      []int  `json:"G"`
 	O      []int  `json:"O"`
 	CardID int    `json:"card_id"`
+}
+// Value converts CardJSON to JSON for PostgreSQL jsonb
+func (c CardJSON) Value() (driver.Value, error) {
+	return json.Marshal(c)
+}
+
+func (c *CardJSON) Scan(value interface{}) error {
+	switch v := value.(type) {
+	case []byte:
+		return json.Unmarshal(v, c)
+
+	case string:
+		return json.Unmarshal([]byte(v), c)
+
+	default:
+		return fmt.Errorf("unsupported CardJSON scan type: %T", value)
+	}
 }
 
 // Transaction for deposits/withdrawals
