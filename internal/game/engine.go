@@ -243,6 +243,9 @@ card := models.Card{
 	MarkedNumbers: []int{},
 	IsWinner:      false,
 }
+if err := e.db.Create(&card).Error; err != nil {
+	return fmt.Errorf("failed saving card: %w", err)
+}
 	e.broadcast(GameEvent{
 		Type:       "card.reserved",
 		GameID:     state.Game.ID.String(),
