@@ -1,6 +1,8 @@
 package bot
 
 import (
+	"fmt"
+
 	"github.com/mymmrac/telego"
 	"github.com/mymmrac/telego/telegoutil"
 )
@@ -44,7 +46,7 @@ func (b *Bot) contactKeyboard() *telego.ReplyKeyboardMarkup {
 }
 func (b *Bot) playKeyboard() *telego.InlineKeyboardMarkup {
 
-	return &telego.InlineKeyboardMarkup{
+	keyboard := &telego.InlineKeyboardMarkup{
 		InlineKeyboard: [][]telego.InlineKeyboardButton{
 			{
 				{
@@ -56,4 +58,8 @@ func (b *Bot) playKeyboard() *telego.InlineKeyboardMarkup {
 			},
 		},
 	}
+
+	fmt.Printf("%+v\n", keyboard)
+
+	return keyboard
 }
