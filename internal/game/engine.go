@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
@@ -153,7 +154,7 @@ func (e *Engine) startNewGame() {
 		StakeAmount:       StakeAmount,
 		MaxCardsPerPlayer: MaxCardsPerPlayer,
 		MaxPlayers:        MaxPlayers,
-		CalledNumbers:     []int{},
+		CalledNumbers: pq.Int64Array{},
 		TotalPool:         0,
 	}
 
@@ -280,7 +281,13 @@ func (e *Engine) callNextNumber(state *GameState) {
 	num := available[rand.Intn(len(available))]
 	state.CalledNums = append(state.CalledNums, num)
 	state.CallIndex++
-	state.Game.CalledNumbers = state.CalledNums
+	called := make([]int64, len(state.CalledNums))
+
+for i, n := range state.CalledNums {
+	called[i] = int64(n)
+}
+
+state.Game.CalledNumbers = pq.Int64Array(called)
 	state.Timer = CallInterval
 
 	e.db.Save(state.Game)

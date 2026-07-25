@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // User represents a Telegram user
@@ -30,7 +31,7 @@ type Game struct {
 	StakeAmount      float64   `json:"stake_amount"`
 	MaxCardsPerPlayer int      `gorm:"default:2" json:"max_cards_per_player"`
 	MaxPlayers       int       `gorm:"default:400" json:"max_players"`
-	CalledNumbers    []int     `gorm:"type:integer[];default:'{}'" json:"called_numbers"`
+	CalledNumbers pq.Int64Array `gorm:"type:integer[]"`
 	WinnerUserID     *int64    `json:"winner_user_id"`
 	WinnerPrize      float64   `gorm:"default:0" json:"winner_prize"`
 	TotalPool        float64   `gorm:"default:0" json:"total_pool"`
