@@ -441,7 +441,7 @@ func (e *Engine) GetGameState(userID int64) (*GameStateResponse, error) {
 	var myCards []models.Card
 	e.db.Where("game_id = ? AND user_id = ?", state.Game.ID, userID).Find(&myCards)
 
-	var calledDisplays []string
+	calledDisplays := make([]string, 0, len(state.CalledNums))
 	for _, n := range state.CalledNums {
 		calledDisplays = append(calledDisplays, fmt.Sprintf("%s%d", getBingoLetter(n), n))
 	}
