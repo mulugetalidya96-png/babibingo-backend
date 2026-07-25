@@ -197,11 +197,14 @@ func (e *Engine) ReserveCard(userID int64, cardNumber int) error {
 		return fmt.Errorf("game already started")
 	}
 
-	// Check user exists
-	var user models.User
-	if err := e.db.First(&user, userID).Error; err != nil {
-		return fmt.Errorf("user not found")
-	}
+	// Check user exists by Telegram ID
+var user models.User
+
+if err := e.db.
+	Where("telegram_id = ?", userID).
+	First(&user).Error; err != nil {
+	return fmt.Errorf("user not found")
+}
 
 	// Check balance (don't deduct yet)
 	if user.Balance < StakeAmount {
