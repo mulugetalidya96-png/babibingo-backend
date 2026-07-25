@@ -22,7 +22,7 @@ const (
 	GameStatusFinished  = "finished"
 	GameStatusCancelled = "cancelled"
 
-	LobbyDuration      = 60 * time.Second
+	LobbyDuration      = 3500 * time.Second
 	CallInterval       = 5 * time.Second
 	MaxCalls           = 75
 	StakeAmount        = 20.0
