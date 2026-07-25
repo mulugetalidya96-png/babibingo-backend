@@ -45,6 +45,8 @@ type GameEvent struct {
 	Pool        float64     `json:"pool,omitempty"`
 	Stake       float64     `json:"stake,omitempty"`
 	Message     string      `json:"message,omitempty"`
+	CardNumber  int         `json:"card_number,omitempty"`
+	UserID      int64       `json:"user_id,omitempty"`
 }
 
 type WinnerInfo struct {
@@ -76,6 +78,11 @@ type GameState struct {
 	Timer      time.Duration
 	CallIndex  int
 	CalledNums []int
+	// card number -> user id
+	ReservedCards map[int]int64
+
+	// user id -> reserved card numbers
+	UserCards map[int64][]int
 	mu         sync.RWMutex
 }
 
@@ -156,6 +163,8 @@ func (e *Engine) startNewGame() {
 		Timer:      LobbyDuration,
 		CallIndex:  0,
 		CalledNums: []int{},
+		ReservedCards: make(map[int]int64),
+	UserCards:     make(map[int64][]int),
 	}
 
 	e.broadcast(GameEvent{
@@ -168,6 +177,61 @@ func (e *Engine) startNewGame() {
 		Pool:       0,
 		Stake:      StakeAmount,
 	})
+}
+func (e *Engine) ReserveCard(userID int64, cardNumber int) error {
+	if e.currentGame == nil {
+		return fmt.Errorf("no active game")
+	}
+
+	state := e.currentGame
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	// Only allow reservations before the game starts
+	if state.Game.Status != GameStatusWaiting {
+		return fmt.Errorf("game already started")
+	}
+
+	// Check user exists
+	var user models.User
+	if err := e.db.First(&user, userID).Error; err != nil {
+		return fmt.Errorf("user not found")
+	}
+
+	// Check balance (don't deduct yet)
+	if user.Balance < StakeAmount {
+		return fmt.Errorf("insufficient balance")
+	}
+
+	// Card already reserved?
+	if reservedBy, ok := state.ReservedCards[cardNumber]; ok {
+		if reservedBy == userID {
+			return fmt.Errorf("card already reserved by you")
+		}
+		return fmt.Errorf("card already reserved")
+	}
+
+	// Max cards per player
+	if len(state.UserCards[userID]) >= MaxCardsPerPlayer {
+		return fmt.Errorf("maximum %d cards allowed", MaxCardsPerPlayer)
+	}
+
+	// Reserve card
+	state.ReservedCards[cardNumber] = userID
+	state.UserCards[userID] = append(
+		state.UserCards[userID],
+		cardNumber,
+	)
+	e.broadcast(GameEvent{
+		Type:       "card.reserved",
+		GameID:     state.Game.ID.String(),
+		CardNumber: cardNumber,
+		UserID:     userID,
+		Players:    len(state.UserCards),
+	})
+
+	return nil
 }
 
 func (e *Engine) startCalling(state *GameState) {
@@ -445,7 +509,10 @@ func (e *Engine) GetGameState(userID int64) (*GameStateResponse, error) {
 	for _, n := range state.CalledNums {
 		calledDisplays = append(calledDisplays, fmt.Sprintf("%s%d", getBingoLetter(n), n))
 	}
-
+    reservedCards := make([]int, 0, len(state.ReservedCards))
+for card := range state.ReservedCards {
+	reservedCards = append(reservedCards, card)
+}
 	return &GameStateResponse{
 		GameID:      state.Game.ID.String(),
 		Status:      state.Game.Status,
@@ -457,6 +524,7 @@ func (e *Engine) GetGameState(userID int64) (*GameStateResponse, error) {
 		Called:      calledDisplays,
 		MyCards:     myCards,
 		MaxCards:    MaxCardsPerPlayer,
+		ReservedCards: reservedCards,
 	}, nil
 }
 
@@ -471,6 +539,7 @@ type GameStateResponse struct {
 	Called     []string       `json:"called"`
 	MyCards    []models.Card  `json:"my_cards"`
 	MaxCards   int            `json:"max_cards"`
+	ReservedCards []int `json:"reserved_cards"`
 }
 
 func (e *Engine) getPlayerCount(gameID uuid.UUID) int {

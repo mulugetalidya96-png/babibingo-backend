@@ -190,6 +190,7 @@ func (c *WSClient) writePump() {
 type WSRequest struct {
 	Type        string   `json:"type"`
 	CardNumbers []int    `json:"card_numbers,omitempty"`
+	CardNumber  int    `json:"card_number,omitempty"` // NEW
 	CardID      string   `json:"card_id,omitempty"`
 }
 
@@ -212,7 +213,15 @@ func handleWSMessage(client *WSClient, engine *Engine, req WSRequest) {
 		// Parse card ID and claim bingo
 		// Implementation depends on your card ID format
 		sendToClient(client, WSResponse{Type: "info", Message: "Bingo claim received"})
-
+    case "card.reserve":
+	err := engine.ReserveCard(client.UserID, req.CardNumber)
+	if err != nil {
+		sendToClient(client, WSResponse{
+			Type: "error",
+			Message: err.Error(),
+		})
+		return
+	}
 	case "game.state":
 		state, err := engine.GetGameState(client.UserID)
 		if err != nil {
