@@ -47,6 +47,7 @@ type GameEvent struct {
 	Message     string      `json:"message,omitempty"`
 	CardNumber  int         `json:"card_number,omitempty"`
 	UserID      int64       `json:"user_id,omitempty"`
+	Card       *models.CardJSON `json:"card,omitempty"`
 }
 
 type WinnerInfo struct {
@@ -225,11 +226,16 @@ func (e *Engine) ReserveCard(userID int64, cardNumber int) error {
 		state.UserCards[userID],
 		cardNumber,
 	)
+	cardData, found := GetCardByID(cardNumber)
+	if !found {
+	return fmt.Errorf("card not found")
+}
 	e.broadcast(GameEvent{
 		Type:       "card.reserved",
 		GameID:     state.Game.ID.String(),
 		CardNumber: cardNumber,
 		UserID:     userID,
+		Card:       &cardData,
 		Players:    len(state.UserCards),
 	})
 
