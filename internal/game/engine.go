@@ -23,7 +23,7 @@ const (
 	GameStatusCancelled = "cancelled"
 
 	LobbyDuration      = 60 * time.Second
-	CallInterval       = 3 * time.Second
+	CallInterval       = 5 * time.Second
 	MaxCalls           = 75
 	StakeAmount        = 20.0
 	MaxCardsPerPlayer  = 2
