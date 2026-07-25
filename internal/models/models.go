@@ -51,7 +51,7 @@ type Card struct {
 	CardNumber     int       `json:"card_number"` // Display number 1-400
 	CardData       CardJSON  `gorm:"type:jsonb" json:"card_data"`
 	IsWinner       bool      `gorm:"default:false" json:"is_winner"`
-	MarkedNumbers  []int     `gorm:"type:integer[];default:'{}'" json:"marked_numbers"`
+MarkedNumbers pq.Int64Array `gorm:"type:integer[];default:'{}'" json:"marked_numbers"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 

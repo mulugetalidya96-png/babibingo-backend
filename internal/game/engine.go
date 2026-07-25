@@ -240,7 +240,7 @@ card := models.Card{
 	UserID:        userID,
 	CardNumber:    cardNumber,
 	CardData:      cardData,
-	MarkedNumbers: []int{},
+	MarkedNumbers: pq.Int64Array{},
 	IsWinner:      false,
 }
 if err := e.db.Create(&card).Error; err != nil {
@@ -329,7 +329,7 @@ func (e *Engine) autoMarkCards(gameID uuid.UUID, number int) {
 
 	for _, card := range cards {
 		if containsNumber(card.CardData, number) {
-			card.MarkedNumbers = append(card.MarkedNumbers, number)
+			card.MarkedNumbers = append(card.MarkedNumbers, int64(number))
 			e.db.Save(&card)
 		}
 	}
@@ -347,7 +347,7 @@ func (e *Engine) ClaimBingo(userID int64, cardID uuid.UUID) (*GameEvent, error) 
 	}
 
 	// Check if card has a winning pattern
-	pattern := checkWinPattern(card.CardData, card.MarkedNumbers)
+	pattern := checkWinPattern(card.CardData,int64SliceToInt(card.MarkedNumbers),)
 	if pattern == "" {
 		return nil, fmt.Errorf("no winning pattern")
 	}
@@ -375,7 +375,15 @@ func (e *Engine) ClaimBingo(userID int64, cardID uuid.UUID) (*GameEvent, error) 
 		Pool:   state.Game.TotalPool,
 	}, nil
 }
+func int64SliceToInt(input []int64) []int {
+	result := make([]int, len(input))
 
+	for i, v := range input {
+		result[i] = int(v)
+	}
+
+	return result
+}
 func (e *Engine) endGame(state *GameState, winner *WinnerInfo) {
 	state.Game.Status = GameStatusFinished
 	state.Game.EndedAt = func() *time.Time { t := time.Now(); return &t }()
