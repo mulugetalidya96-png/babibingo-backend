@@ -48,7 +48,7 @@ type GameEvent struct {
 	Message     string      `json:"message,omitempty"`
 	CardNumber  int         `json:"card_number,omitempty"`
 	UserID      int64       `json:"user_id,omitempty"`
-	Card       *models.CardJSON `json:"card,omitempty"`
+	Card       *models.Card `json:"card,omitempty"`
 }
 
 type WinnerInfo struct {
@@ -234,12 +234,21 @@ if err := e.db.
 	if !found {
 	return fmt.Errorf("card not found")
 }
+card := models.Card{
+	ID:            uuid.New(),
+	GameID:        state.Game.ID,
+	UserID:        userID,
+	CardNumber:    cardNumber,
+	CardData:      cardData,
+	MarkedNumbers: []int{},
+	IsWinner:      false,
+}
 	e.broadcast(GameEvent{
 		Type:       "card.reserved",
 		GameID:     state.Game.ID.String(),
 		CardNumber: cardNumber,
 		UserID:     userID,
-		Card:       &cardData,
+		Card:       &card,
 		Players:    len(state.UserCards),
 	})
 
