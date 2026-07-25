@@ -132,15 +132,17 @@ func (e *Engine) tick() {
 		}
 
 	case GameStatusCalling:
-		state.Timer -= CallInterval
-		if state.Timer <= 0 || state.CallIndex >= MaxCalls {
-			if state.CallIndex >= MaxCalls {
-				e.endGame(state, nil) // No winner
-			}
-			// Otherwise wait for bingo claim
-		} else if int(state.Timer.Seconds())%int(CallInterval.Seconds()) == 0 {
-			e.callNextNumber(state)
+	state.Timer -= time.Second
+
+	if state.Timer <= 0 {
+
+		if state.CallIndex >= MaxCalls {
+			e.endGame(state, nil)
+			return
 		}
+
+		e.callNextNumber(state)
+	}
 	}
 }
 
@@ -564,9 +566,19 @@ func (e *Engine) getCalledDisplays(nums []int) []string {
 
 func (e *Engine) broadcast(event GameEvent) {
 	data, _ := json.Marshal(event)
-	// Publish to Redis for multi-instance support
+
 	ctx := context.Background()
 	e.rdb.Publish(ctx, "game:events", data)
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	for _, client := range e.clients {
+		select {
+		case client.Send <- data:
+		default:
+		}
+	}
 }
 
 func (e *Engine) SubscribeEvents() *redis.PubSub {
