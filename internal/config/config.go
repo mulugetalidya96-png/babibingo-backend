@@ -8,8 +8,15 @@ type Config struct {
 	BotToken    string
 	WebAppURL   string
 	JWTSecret   string
+	Bot BotConfig `json:"bot"`
 }
-
+type BotConfig struct {
+	Enabled         bool `json:"enabled"`
+	MinBotsPerGame  int  `json:"min_bots_per_game"`
+	MaxBotsPerGame  int  `json:"max_bots_per_game"`
+	BotsPerTick     int  `json:"bots_per_tick"`
+	ReserveInterval int  `json:"reserve_interval"` // seconds
+}
 func Load() *Config {
 	return &Config{
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/babibingo?sslmode=disable"),

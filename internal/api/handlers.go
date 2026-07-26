@@ -4,6 +4,8 @@ import (
 	"babibingo/internal/config"
 	"babibingo/internal/game"
 	"babibingo/internal/models"
+	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -263,4 +265,56 @@ func (h *Handler) CreateWithdrawal(c *gin.Context) {
 
 func (h *Handler) Health(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok"})
+}
+// internal/api/handlers.go
+
+// GetBotStats returns bot statistics
+func (h *Handler) GetBotStats(c *gin.Context) {
+	stats := h.engine.GetBotManager().GetBotStats()
+	c.JSON(http.StatusOK, stats)
+}
+
+// AddBots manually adds bots
+func (h *Handler) AddBots(c *gin.Context) {
+	var req struct {
+		Count int `json:"count"`
+	}
+	
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	
+	if req.Count <= 0 || req.Count > 50 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "count must be between 1 and 50"})
+		return
+	}
+	
+	h.engine.GetBotManager().ReserveCardsForBots(req.Count)
+	
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("Added %d bots", req.Count),
+	})
+}
+
+// ToggleBots turns bot system on/off
+func (h *Handler) ToggleBots(c *gin.Context) {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	
+	if req.Enabled {
+		h.engine.StartBots()
+	} else {
+		h.engine.StopBots()
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"enabled": req.Enabled,
+	})
 }

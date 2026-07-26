@@ -32,18 +32,38 @@ type Engine struct {
 	clients     map[string]*Client
 	mu          sync.RWMutex
 	currentGame *GameState
+	botManager  *BotManager // ✅ NEW
 }
 
 // NewEngine creates a new game engine
 func NewEngine(db *gorm.DB, rdb *redis.Client) *Engine {
 	InitCardCache()
-	return &Engine{
+	
+	engine := &Engine{
 		db:      db,
 		rdb:     rdb,
 		clients: make(map[string]*Client),
 	}
+	
+	// ✅ Initialize bot manager
+	engine.botManager = NewBotManager(engine)
+	
+	return engine
+}
+// GetBotManager returns the bot manager
+func (e *Engine) GetBotManager() *BotManager {
+	return e.botManager
 }
 
+// StartBots starts the bot system
+func (e *Engine) StartBots() {
+	e.botManager.StartBotRoutine()
+}
+
+// StopBots stops the bot system
+func (e *Engine) StopBots() {
+	e.botManager.StopBotRoutine()
+}
 // GetCurrentGame returns the current game state
 func (e *Engine) GetCurrentGame() (*models.Game, int, int, float64, float64, float64, error) {
 	if e.currentGame == nil {

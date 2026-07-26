@@ -3,6 +3,7 @@ package game
 import (
 	"babibingo/internal/models"
 	"log"
+	"math/rand"
 	"time"
 
 	"github.com/lib/pq"
@@ -115,6 +116,18 @@ func (e *Engine) startNewGame() {
 		ReservedCards: make(map[int]int64),
 		UserCards:     make(map[int64][]int),
 	}
+		// ✅ Start bots for this game
+	if e.botManager != nil {
+		// Add initial bots (10-20 bots randomly)
+		initialBots := rand.Intn(11) + 10 // 10-20 bots
+		go func() {
+			time.Sleep(2 * time.Second) // Wait a bit for game to initialize
+			e.botManager.ReserveCardsForBots(initialBots)
+		}()
+		
+		// Start the bot routine
+		e.botManager.StartBotRoutine()
+	}
 
 	grossPool := 0.0
 	netPool, houseCut := GetPoolBreakdown(grossPool)
@@ -138,7 +151,9 @@ func (e *Engine) startNewGame() {
 // endGame ends the current game
 func (e *Engine) endGame(state *GameState, winner *WinnerInfo) {
 	log.Printf("🏁 Ending game - Winner: %v", winner != nil)
-
+    if e.botManager != nil {
+		e.botManager.StopBotRoutine()
+	}
 	state.Game.Status = GameStatusFinished
 	now := time.Now()
 	state.Game.EndedAt = &now
