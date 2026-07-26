@@ -16,15 +16,17 @@ type Bot struct {
 
 	db  *gorm.DB
 	rdb *redis.Client
-    cfg *config.Config
+	cfg *config.Config  // ✅ Keep this
 	webAppURL string
 }
 
+// ✅ Updated: Accept config as parameter
 func New(
 	token string,
 	webAppURL string,
 	db *gorm.DB,
 	redisClient *redis.Client,
+	cfg *config.Config, // ✅ Add config parameter
 ) (*Bot, error) {
 
 	api, err := telego.NewBot(token)
@@ -44,7 +46,8 @@ func New(
 		me:         me,
 		db:         db,
 		rdb:        redisClient,
-		webAppURL: webAppURL,
+		cfg:        cfg,        // ✅ Set config
+		webAppURL:  webAppURL,
 	}
 
 	if err := b.setupCommands(ctx); err != nil {

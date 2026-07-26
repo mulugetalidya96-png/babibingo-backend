@@ -48,6 +48,7 @@ if cfg.BotToken != "" {
 		cfg.WebAppURL,
 		db,
 		rdb,
+		cfg,
 	)
 
 	if err != nil {
