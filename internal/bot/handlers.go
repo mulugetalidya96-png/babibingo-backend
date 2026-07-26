@@ -87,7 +87,7 @@ func (b *Bot) handleTelebirrSMS(
 	}
 
 	// 3️⃣ Send processing message
-	b.sendText(ctx, chatID, "⏳ Verifying transaction with verify.et...")
+	b.sendText(ctx, chatID, "⏳ Verifying transaction")
    babiBingoPhone := "0997325583"
 	// 4️⃣ Call verify.et API
 	verifyClient := verify.NewVerifyClient(b.cfg.VerifyAPIKey)

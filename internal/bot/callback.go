@@ -65,8 +65,7 @@ func (b *Bot) handleDepositBankSelection(
 			"📱 *Telebirr Deposit*\n\n"+
 				"Send money to:\n"+
 				"`0940072277` — BabiBingo\n\n"+
-				"Copy confirmation code and submit in WebApp.\n\n"+
-				"⏱️ Processing: 1-2 minutes",
+				"Copy SMS and submit.\n\n",
 		)
 	case "cbebirr":
 		b.sendMarkdown(
@@ -77,8 +76,7 @@ func (b *Bot) handleDepositBankSelection(
 				"Account: `1000123456789`\n"+
 				"Name: BabiBingo\n"+
 				"Bank: CBE\n\n"+
-				"Copy transaction reference and submit in WebApp.\n\n"+
-				"⏱️ Processing: 1-5 minutes",
+				"Copy transaction reference and submit.\n\n",
 		)
 	default:
 		b.sendText(ctx, chatID, "❌ Invalid selection. Please try again.")
