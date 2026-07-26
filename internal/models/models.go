@@ -105,5 +105,7 @@ type GamePlayer struct {
 	CardsCount int       `gorm:"default:0" json:"cards_count"`
 	TotalStake float64   `gorm:"default:0" json:"total_stake"`
 	JoinedAt   time.Time `json:"joined_at"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 

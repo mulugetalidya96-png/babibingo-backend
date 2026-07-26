@@ -96,7 +96,7 @@ func (h *Handler) GetMe(c *gin.Context) {
 }
 
 func (h *Handler) GetCurrentGame(c *gin.Context) {
-	game, players, boards, pool, err := h.engine.GetCurrentGame()
+	game, players, boards, pool,grossPool, houseCut, err := h.engine.GetCurrentGame()
 	if err != nil {
 		c.JSON(200, gin.H{
 			"status":  "waiting",
@@ -114,6 +114,8 @@ func (h *Handler) GetCurrentGame(c *gin.Context) {
 		"pool":        pool,
 		"max_players": game.MaxPlayers,
 		"max_cards":   game.MaxCardsPerPlayer,
+		"house_cut" : houseCut,
+		"groos_pool" : grossPool,
 	})
 }
 
