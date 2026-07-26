@@ -13,6 +13,7 @@ import (
 
 // collectAllStakes - Updated with proper error handling
 
+// collectAllStakes collects stakes from all players with reservations
 func (e *Engine) collectAllStakes(state *GameState) error {
 	// Get all unique Telegram IDs with reservations
 	telegramIDs := make(map[int64]bool)
@@ -31,6 +32,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			log.Printf("🔴 Panic recovered in collectAllStakes: %v", r)
 		}
 	}()
 
@@ -64,6 +66,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			tx.Rollback()
 			return fmt.Errorf("failed to deduct balance for user %d: %w", telegramID, err)
 		}
+		log.Printf("  ✅ Deducted balance for user %d, new balance: %.2f", telegramID, user.Balance)
 
 		// Create transaction records
 		for _, cardNumber := range state.UserCards[telegramID] {
@@ -80,9 +83,10 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 				tx.Rollback()
 				return fmt.Errorf("failed to create transaction: %w", err)
 			}
+			log.Printf("  ✅ Created transaction for card #%d", cardNumber)
 		}
 
-		// ✅ FIX: Check for game_player record and create if not exists
+		// ✅ Handle game_player record - create if not exists
 		var gamePlayer models.GamePlayer
 		result := tx.Where("game_id = ? AND user_id = ?", state.Game.ID, user.ID).First(&gamePlayer)
 		
@@ -126,6 +130,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			tx.Rollback()
 			return fmt.Errorf("failed to update card status: %w", err)
 		}
+		log.Printf("  ✅ Updated card status to 'active' for user ID: %d", user.ID)
 
 		totalPool += totalStake
 	}
