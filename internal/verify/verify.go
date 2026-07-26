@@ -1,3 +1,5 @@
+// internal/verify/verify.go
+
 package verify
 
 import (
@@ -9,66 +11,73 @@ import (
 	"time"
 )
 
-// VerifyClient handles communication with verify.et API
 type VerifyClient struct {
-	BaseURL    string
-	APIKey     string
-	HTTPClient *http.Client
+	BaseURL string
+	APIKey  string
+	Client  *http.Client
 }
 
-// VerifyRequest represents the request to verify.et API
 type VerifyRequest struct {
-	TransactionID string  `json:"transaction_id"`
-	Amount        float64 `json:"amount"`
-	PhoneNumber   string  `json:"phone_number,omitempty"`
+	Bank              string  `json:"bank"`
+	TransactionNumber string  `json:"transactionNumber"` // ✅ Correct field name
+	Amount            float64 `json:"amount,omitempty"`
+	SettlementAccount string  `json:"settlementAccount,omitempty"` // ✅ For receiver verification
 }
 
-// VerifyResponse represents the response from verify.et API
 type VerifyResponse struct {
-	Success      bool    `json:"success"`
-	TransactionID string `json:"transaction_id"`
-	Amount       float64 `json:"amount"`
-	Status       string  `json:"status"`
-	SenderName   string  `json:"sender_name"`
-	ReceiverName string  `json:"receiver_name"`
-	Timestamp    string  `json:"timestamp"`
-	Message      string  `json:"message"`
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Data    struct {
+		RequestID string `json:"requestId"`
+		Result    struct {
+			Status       string  `json:"status"`
+			Amount       float64 `json:"amount"`
+			SenderName   string  `json:"senderName"`
+			ReceiverName string  `json:"receiverName"`
+			Receiver     string  `json:"receiver"` // ✅ This is the receiver account
+			Matched      bool    `json:"matched"`   // ✅ Settlement account match
+		} `json:"result"`
+	} `json:"data"`
 }
 
-// NewVerifyClient creates a new verify.et client
 func NewVerifyClient(apiKey string) *VerifyClient {
+	// ✅ Correct base URL
 	return &VerifyClient{
-		BaseURL: "https://api.verify.et/v1",
+		BaseURL: "https://verify.et",
 		APIKey:  apiKey,
-		HTTPClient: &http.Client{
+		Client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
 }
 
-// VerifyTransaction verifies a Telebirr transaction
-func (c *VerifyClient) VerifyTransaction(txnID string, amount float64) (*VerifyResponse, error) {
-	url := fmt.Sprintf("%s/verify/telebirr", c.BaseURL)
+func (c *VerifyClient) VerifyTransaction(txnID string, amount float64, receiverPhone string) (*VerifyResponse, error) {
+	// ✅ Correct endpoint
+	url := fmt.Sprintf("%s/api/verify", c.BaseURL)
 
 	reqBody := VerifyRequest{
-		TransactionID: txnID,
-		Amount:        amount,
+		Bank:              "telebirr",
+		TransactionNumber: txnID,
+		Amount:            amount,
+		SettlementAccount: receiverPhone, // ✅ Verify it was sent to our account
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, err
 	}
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.APIKey))
+	if c.APIKey != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.APIKey))
+	}
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := c.Client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make request: %w", err)
 	}
@@ -76,11 +85,11 @@ func (c *VerifyClient) VerifyTransaction(txnID string, amount float64) (*VerifyR
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return nil, err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error: %s - %s", resp.Status, string(body))
+		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	var verifyResp VerifyResponse
@@ -89,27 +98,4 @@ func (c *VerifyClient) VerifyTransaction(txnID string, amount float64) (*VerifyR
 	}
 
 	return &verifyResp, nil
-}
-
-// VerifyAndUpdateTransaction verifies and updates user balance
-func (c *VerifyClient) VerifyAndUpdateTransaction(txnID string, amount float64, userID int64) error {
-	resp, err := c.VerifyTransaction(txnID, amount)
-	if err != nil {
-		return fmt.Errorf("verification failed: %w", err)
-	}
-
-	if !resp.Success {
-		return fmt.Errorf("transaction verification failed: %s", resp.Message)
-	}
-
-	if resp.Status != "completed" {
-		return fmt.Errorf("transaction not completed: %s", resp.Status)
-	}
-
-	// Amount mismatch check
-	if resp.Amount != amount {
-		return fmt.Errorf("amount mismatch: expected %.2f, got %.2f", amount, resp.Amount)
-	}
-
-	return nil
 }
