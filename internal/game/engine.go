@@ -116,46 +116,50 @@ func CalculateHouseCut(grossPool float64) float64 {
     return grossPool * HouseCutPercent
 }
 func (e *Engine) tick() {
-	if e.currentGame == nil {
-		e.startNewGame()
-		return
-	}
+    if e.currentGame == nil {
+        e.startNewGame()
+        return
+    }
 
-	state := e.currentGame
-	state.mu.Lock()
-	defer state.mu.Unlock()
+    state := e.currentGame
+    state.mu.Lock()
+    defer state.mu.Unlock()
 
-	switch state.Game.Status {
-	case GameStatusWaiting:
-		state.Timer -= 1 * time.Second
-		if state.Timer <= 0 {
-			e.startCalling(state)
-		} else {
-			e.broadcast(GameEvent{
-				Type:       "timer.tick",
-				GameID:     state.Game.ID.String(),
-				Status:     GameStatusWaiting,
-				Timer:      int(state.Timer.Seconds()),
-				Players:    e.getPlayerCount(state.Game.ID),
-				BoardCount: e.getBoardCount(state.Game.ID),
-				Pool:       state.Game.TotalPool,
-				Stake:      StakeAmount,
-			})
-		}
+    switch state.Game.Status {
+    case GameStatusWaiting:
+        state.Timer -= 1 * time.Second
+        if state.Timer <= 0 {
+            e.startCalling(state)
+        } else {
+            // ✅ Calculate net pool and house cut
+            grossPool := state.Game.TotalPool
+            netPool := CalculateNetPool(grossPool)
+            houseCut := CalculateHouseCut(grossPool)
+            
+            e.broadcast(GameEvent{
+                Type:       "timer.tick",
+                GameID:     state.Game.ID.String(),
+                Status:     GameStatusWaiting,
+                Timer:      int(state.Timer.Seconds()),
+                Players:    e.getPlayerCount(state.Game.ID),
+                BoardCount: e.getBoardCount(state.Game.ID),
+                Pool:       netPool,        // ✅ Net pool
+                GrossPool:  grossPool,      // ✅ Gross pool
+                HouseCut:   houseCut,       // ✅ House cut
+                Stake:      StakeAmount,
+            })
+        }
 
-	case GameStatusCalling:
-	state.Timer -= time.Second
-
-	if state.Timer <= 0 {
-
-		if state.CallIndex >= MaxCalls {
-			e.endGame(state, nil)
-			return
-		}
-
-		e.callNextNumber(state)
-	}
-	}
+    case GameStatusCalling:
+        state.Timer -= time.Second
+        if state.Timer <= 0 {
+            if state.CallIndex >= MaxCalls {
+                e.endGame(state, nil)
+                return
+            }
+            e.callNextNumber(state)
+        }
+    }
 }
 
 func (e *Engine) startNewGame() {
@@ -285,7 +289,7 @@ func (e *Engine) ReserveCard(userID int64, cardNumber int) error {
     netPool := CalculateNetPool(grossPool)
     houseCut := CalculateHouseCut(grossPool)
 
-    // ✅ Broadcast with both gross and net pools
+    // ✅ Broadcast with net pool
     e.broadcast(GameEvent{
         Type:       "card.reserved",
         GameID:     state.Game.ID.String(),
@@ -293,9 +297,9 @@ func (e *Engine) ReserveCard(userID int64, cardNumber int) error {
         UserID:     userID,
         Card:       &card,
         Players:    len(state.UserCards),
-        Pool:       netPool,        // Net pool (after house cut)
-        GrossPool:  grossPool,      // Gross pool (before house cut)
-        HouseCut:   houseCut,       // House cut amount
+        Pool:       netPool,        // ✅ Net pool (after house cut)
+        GrossPool:  grossPool,      // ✅ Gross pool (before house cut)
+        HouseCut:   houseCut,       // ✅ House cut amount
         Stake:      StakeAmount,
         Message:    fmt.Sprintf("Card #%d reserved! Prize Pool: $%.2f (House: $%.2f)", 
             cardNumber, netPool, houseCut),
@@ -499,9 +503,9 @@ func (e *Engine) CancelReservation(userID int64, cardNumber int) error {
         GameID:     state.Game.ID.String(),
         CardNumber: cardNumber,
         UserID:     userID,
-        Pool:       netPool,        // Net pool
-        GrossPool:  grossPool,      // Gross pool
-        HouseCut:   houseCut,       // House cut
+        Pool:       netPool,        // ✅ Net pool
+        GrossPool:  grossPool,      // ✅ Gross pool
+        HouseCut:   houseCut,       // ✅ House cut
         Message:    fmt.Sprintf("Card #%d cancelled. Prize Pool: $%.2f", cardNumber, netPool),
     })
     
@@ -605,11 +609,11 @@ func (e *Engine) ClaimBingo(userID int64, cardID uuid.UUID) (*GameEvent, error) 
     e.endGame(state, winner)
 
     return &GameEvent{
-        Type:   "game.winner",
-        Winner: winner,
-        Pool:   prize,           // Net pool (prize)
-        GrossPool: grossPool,    // Gross pool
-        HouseCut: houseCut,      // House cut
+        Type:      "game.winner",
+        Winner:    winner,
+        Pool:      prize,           // ✅ Net pool (prize)
+        GrossPool: grossPool,       // ✅ Gross pool
+        HouseCut:  houseCut,        // ✅ House cut
     }, nil
 }
 func int64SliceToInt(input []int64) []int {
@@ -769,38 +773,47 @@ func (e *Engine) GetCurrentGame() (*models.Game, int, int, float64, error) {
 }
 
 func (e *Engine) GetGameState(userID int64) (*GameStateResponse, error) {
-	if e.currentGame == nil {
-		return nil, fmt.Errorf("no active game")
-	}
+    if e.currentGame == nil {
+        return nil, fmt.Errorf("no active game")
+    }
 
-	state := e.currentGame
-	state.mu.RLock()
-	defer state.mu.RUnlock()
+    state := e.currentGame
+    state.mu.RLock()
+    defer state.mu.RUnlock()
 
-	var myCards []models.Card
-	e.db.Where("game_id = ? AND user_id = ?", state.Game.ID, userID).Find(&myCards)
+    var myCards []models.Card
+    e.db.Where("game_id = ? AND user_id = ?", state.Game.ID, userID).Find(&myCards)
 
-	calledDisplays := make([]string, 0, len(state.CalledNums))
-	for _, n := range state.CalledNums {
-		calledDisplays = append(calledDisplays, fmt.Sprintf("%s%d", getBingoLetter(n), n))
-	}
+    calledDisplays := make([]string, 0, len(state.CalledNums))
+    for _, n := range state.CalledNums {
+        calledDisplays = append(calledDisplays, fmt.Sprintf("%s%d", getBingoLetter(n), n))
+    }
+    
     reservedCards := make([]int, 0, len(state.ReservedCards))
-for card := range state.ReservedCards {
-	reservedCards = append(reservedCards, card)
-}
-	return &GameStateResponse{
-		GameID:      state.Game.ID.String(),
-		Status:      state.Game.Status,
-		Stake:       StakeAmount,
-		Timer:       int(state.Timer.Seconds()),
-		Players:     e.getPlayerCount(state.Game.ID),
-		BoardCount:  e.getBoardCount(state.Game.ID),
-		Pool:        state.Game.TotalPool,
-		Called:      calledDisplays,
-		MyCards:     myCards,
-		MaxCards:    MaxCardsPerPlayer,
-		ReservedCards: reservedCards,
-	}, nil
+    for card := range state.ReservedCards {
+        reservedCards = append(reservedCards, card)
+    }
+
+    // ✅ Calculate net pool and house cut
+    grossPool := state.Game.TotalPool
+    netPool := CalculateNetPool(grossPool)
+    houseCut := CalculateHouseCut(grossPool)
+
+    return &GameStateResponse{
+        GameID:        state.Game.ID.String(),
+        Status:        state.Game.Status,
+        Stake:         StakeAmount,
+        Timer:         int(state.Timer.Seconds()),
+        Players:       e.getPlayerCount(state.Game.ID),
+        BoardCount:    e.getBoardCount(state.Game.ID),
+        Pool:          netPool,        // ✅ Net pool
+        GrossPool:     grossPool,      // ✅ Gross pool
+        HouseCut:      houseCut,       // ✅ House cut
+        Called:        calledDisplays,
+        MyCards:       myCards,
+        MaxCards:      MaxCardsPerPlayer,
+        ReservedCards: reservedCards,
+    }, nil
 }
 
 type GameStateResponse struct {
