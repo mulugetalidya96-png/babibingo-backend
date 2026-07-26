@@ -23,6 +23,7 @@ type GameEvent struct {
 	Stake       float64     `json:"stake,omitempty"`
 	Message     string      `json:"message,omitempty"`
 	CardNumber  int         `json:"card_number,omitempty"`
+	WinningCards []models.Card  `json:"winning_cards,omitempty"`
 	UserID      int64       `json:"user_id,omitempty"`
 	Card        *models.Card `json:"card,omitempty"`
 }
@@ -35,6 +36,7 @@ type WinnerInfo struct {
 	Prize       float64 `json:"prize"`
 	CardNumber  int     `json:"card_number"`
 	Pattern     string  `json:"pattern"`
+	Card       *models.Card   `json:"card,omitempty"`
 }
 
 // Client represents a WebSocket client
