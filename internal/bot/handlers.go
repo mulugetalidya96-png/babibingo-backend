@@ -66,6 +66,8 @@ func (b *Bot) handleMessage(ctx context.Context, msg *telego.Message) {
 // ✅ Handle Telebirr SMS
 // internal/bot/handlers.go - handleTelebirrSMS
 
+// internal/bot/handlers.go - handleTelebirrSMS
+
 func (b *Bot) handleTelebirrSMS(
 	ctx context.Context,
 	chatID int64,
@@ -86,15 +88,23 @@ func (b *Bot) handleTelebirrSMS(
 		return
 	}
 
-	// 3️⃣ Send processing message
+	// 3️⃣ Check config
+	if b.cfg == nil || b.cfg.VerifyAPIKey == "" {
+		b.sendText(ctx, chatID, "❌ Verify.et API key is not configured. Please contact support.")
+		return
+	}
+
+	// 4️⃣ Send processing message
 	b.sendText(ctx, chatID, "⏳ Verifying transaction")
-   babiBingoPhone := "0997325583"
-	// 4️⃣ Call verify.et API
+
+	// 5️⃣ Get phone number
+	babiBingoPhone := "0997325583"
+	// 6️⃣ Call verify.et API
 	verifyClient := verify.NewVerifyClient(b.cfg.VerifyAPIKey)
 	verifyResp, err := verifyClient.VerifyTransaction(
 		txnInfo.TransactionID,
 		txnInfo.Amount,
-		babiBingoPhone, // ✅ Send our phone number for settlement matching
+		babiBingoPhone,
 	)
 	if err != nil {
 		log.Printf("Verify.et error: %v", err)
@@ -105,7 +115,7 @@ func (b *Bot) handleTelebirrSMS(
 		return
 	}
 
-	// 5️⃣ Check verification result
+	// 7️⃣ Check if verification was successful
 	if !verifyResp.Success {
 		b.sendText(ctx, chatID, fmt.Sprintf(
 			"❌ Transaction verification failed: %s",
@@ -114,29 +124,37 @@ func (b *Bot) handleTelebirrSMS(
 		return
 	}
 
-	// 6️⃣ Check if the transaction was completed
-	if verifyResp.Data.Result.Status != "completed" {
+	// 8️⃣ Check data array
+	if len(verifyResp.Data) == 0 {
+		b.sendText(ctx, chatID, "❌ No transaction data found. Please try again.")
+		return
+	}
+
+	txnData := verifyResp.Data[0]
+
+	// 9️⃣ Check if verified
+	if !txnData.Verified {
 		b.sendText(ctx, chatID, fmt.Sprintf(
-			"⏳ Transaction status: %s. Please wait a moment.",
-			verifyResp.Data.Result.Status,
+			"❌ Transaction not verified. Status: %s",
+			txnData.Status,
 		))
 		return
 	}
 
-	// ✅ 7️⃣ Check settlement account match
-	if !verifyResp.Data.Result.Matched {
+	// 🔟 Check settlement account match
+	if !txnData.SettlementAccountMatch.Matched {
 		b.sendText(ctx, chatID, fmt.Sprintf(
-			"❌ This transaction was sent to a different account.\n\n"+
+			"❌ Transaction sent to wrong account.\n\n"+
 				"Expected: %s\n"+
 				"Received: %s\n\n"+
-				"Please send to the correct BabiBingo account and try again.",
+				"Please send to the correct BabiBingo account.",
 			babiBingoPhone,
-			verifyResp.Data.Result.Receiver,
+			txnData.ReceiverAccount,
 		))
 		return
 	}
 
-	// 8️⃣ Update user balance
+	// 1️⃣1️⃣ Update user balance
 	dbUser.Balance += txnInfo.Amount
 	if err := b.db.Save(&dbUser).Error; err != nil {
 		log.Printf("Failed to update balance: %v", err)
@@ -144,7 +162,7 @@ func (b *Bot) handleTelebirrSMS(
 		return
 	}
 
-	// 9️⃣ Create transaction record
+	// 1️⃣2️⃣ Create transaction record
 	transaction := models.Transaction{
 		UserID:    dbUser.ID,
 		Type:      "deposit",
@@ -158,15 +176,17 @@ func (b *Bot) handleTelebirrSMS(
 		log.Printf("Failed to create transaction record: %v", err)
 	}
 
-	// 🔟 Send success message
+	// 1️⃣3️⃣ Send success message
 	b.sendMarkdown(ctx, chatID, fmt.Sprintf(
 		"✅ *Deposit Successful!*\n\n"+
 			"💰 Amount: %.2f ETB\n"+
 			"🆔 Transaction: `%s`\n"+
+			"📱 Sent to: %s\n"+
 			"💳 New Balance: %.2f ETB\n\n"+
 			"🎮 Play now from the menu!",
 		txnInfo.Amount,
 		txnInfo.TransactionID,
+		babiBingoPhone,
 		dbUser.Balance,
 	))
 }
