@@ -88,7 +88,6 @@ func generateRandomPhone() string {
 func generateUniqueTelegramID(existingIDs map[int64]bool) int64 {
 	var id int64
 	for {
-		// Use a range that won't conflict with real users (e.g., 1000000000 - 1999999999)
 		id = 1000000000 + rand.Int63n(1000000000)
 		if !existingIDs[id] {
 			existingIDs[id] = true
@@ -101,7 +100,6 @@ func generateUniqueTelegramID(existingIDs map[int64]bool) int64 {
 func generateReferralCode(existingCodes map[string]bool) string {
 	const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	for {
-		// Generate 8-character code
 		b := make([]byte, 8)
 		for i := range b {
 			b[i] = letters[rand.Intn(len(letters))]
@@ -130,9 +128,6 @@ func (bm *BotManager) CreateBot(existingIDs map[int64]bool) *Bot {
 
 // ReserveCardsForBots reserves cards for bots
 func (bm *BotManager) ReserveCardsForBots(count int) {
-	bm.mu.Lock()
-	defer bm.mu.Unlock()
-
 	engine := bm.engine
 	if engine.currentGame == nil {
 		log.Println("⚠️ No active game for bots to join")
@@ -140,16 +135,19 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 	}
 
 	state := engine.currentGame
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
+	
+	// ✅ Use a separate lock for checking state, don't hold it during DB operations
+	state.mu.RLock()
 	if state.Game.Status != GameStatusWaiting {
+		state.mu.RUnlock()
 		log.Println("⚠️ Game already started, bots cannot join")
 		return
 	}
-
-	// Get available cards
+	
+	// Get available cards while holding read lock
 	availableCards := bm.getAvailableCards(state)
+	state.mu.RUnlock()
+
 	if len(availableCards) == 0 {
 		log.Println("⚠️ No available cards for bots")
 		return
@@ -160,15 +158,14 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 		count = len(availableCards)
 	}
 
-	// Get existing IDs and referral codes from database
+	// Get existing user data from database
 	existingIDs, existingCodes := bm.getExistingUserData()
 
 	log.Printf("🤖 Creating %d bots...", count)
 
-	// Create and reserve cards for bots
 	botsReserved := 0
 	for i := 0; i < count && i < len(availableCards); i++ {
-		// Create bot (pass only existingIDs)
+		// Create bot
 		bot := bm.CreateBot(existingIDs)
 		
 		// Get a random available card
@@ -176,16 +173,16 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 		cardNumber := availableCards[cardIndex]
 		availableCards = append(availableCards[:cardIndex], availableCards[cardIndex+1:]...)
 
-		// Generate a unique referral code for this bot
+		// Generate unique referral code
 		referralCode := generateReferralCode(existingCodes)
 
-		// Create user in database with unique referral code
+		// Create user in database
 		user := &models.User{
 			TelegramID:   bot.TelegramID,
 			FirstName:    bot.Name,
 			LastName:     "",
 			PhoneNumber:  bot.Phone,
-			Balance:      1000.0, // Give bots some balance
+			Balance:      1000.0,
 			ReferralCode: referralCode,
 			CreatedAt:    time.Now(),
 			LastActive:   time.Now(),
@@ -196,42 +193,48 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 			continue
 		}
 
-		// Reserve the card
-		if err := engine.reserveCardForBot(state, bot.TelegramID, cardNumber); err != nil {
+		// ✅ Reserve the card with a separate lock
+		if err := bm.reserveCardForBot(state, bot.TelegramID, cardNumber); err != nil {
 			log.Printf("⚠️ Failed to reserve card %d for bot %s: %v", cardNumber, bot.Name, err)
 			continue
 		}
 
 		bot.CardNumber = cardNumber
+		bm.mu.Lock()
 		bm.bots = append(bm.bots, bot)
+		bm.mu.Unlock()
 		botsReserved++
 
 		log.Printf("🤖 Bot '%s' (%s) reserved card #%d", bot.Name, bot.Phone, cardNumber)
 
-		// Small delay between bot actions to simulate human behavior
-		time.Sleep(time.Duration(100+rand.Intn(200)) * time.Millisecond)
+		// Small delay between bot actions
+		time.Sleep(time.Duration(50+rand.Intn(100)) * time.Millisecond)
 	}
 
 	log.Printf("✅ %d bots successfully reserved cards", botsReserved)
 }
 
-// reserveCardForBot reserves a card for a bot (bypasses WebSocket)
-func (e *Engine) reserveCardForBot(state *GameState, telegramID int64, cardNumber int) error {
+// ✅ NEW: Separate method for reserving card for bot with proper locking
+func (bm *BotManager) reserveCardForBot(state *GameState, telegramID int64, cardNumber int) error {
+	// Get user from database
+	var user models.User
+	if err := bm.engine.db.Where("telegram_id = ?", telegramID).First(&user).Error; err != nil {
+		return err
+	}
+
+	// ✅ Lock state only for the reservation operation
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	// Check if card is already reserved
 	if _, ok := state.ReservedCards[cardNumber]; ok {
 		return fmt.Errorf("card already reserved")
 	}
 
-	// Get user
-	var user models.User
-	if err := e.db.Where("telegram_id = ?", telegramID).First(&user).Error; err != nil {
-		return err
-	}
-
 	// Reserve in memory
 	state.ReservedCards[cardNumber] = telegramID
 	state.UserCards[telegramID] = append(state.UserCards[telegramID], cardNumber)
-	e.UpdatePool(state)
+	bm.engine.UpdatePool(state)
 
 	// Get card data
 	cardData, found := GetCardByID(cardNumber)
@@ -245,7 +248,7 @@ func (e *Engine) reserveCardForBot(state *GameState, telegramID int64, cardNumbe
 				break
 			}
 		}
-		e.UpdatePool(state)
+		bm.engine.UpdatePool(state)
 		return fmt.Errorf("card not found")
 	}
 
@@ -261,7 +264,7 @@ func (e *Engine) reserveCardForBot(state *GameState, telegramID int64, cardNumbe
 		Status:        "reserved",
 	}
 
-	if err := e.db.Create(&card).Error; err != nil {
+	if err := bm.engine.db.Create(&card).Error; err != nil {
 		// Rollback
 		delete(state.ReservedCards, cardNumber)
 		userCards := state.UserCards[telegramID]
@@ -271,9 +274,27 @@ func (e *Engine) reserveCardForBot(state *GameState, telegramID int64, cardNumbe
 				break
 			}
 		}
-		e.UpdatePool(state)
+		bm.engine.UpdatePool(state)
 		return err
 	}
+
+	// ✅ Broadcast the reservation event
+	grossPool := state.Game.TotalPool
+	netPool, houseCut := GetPoolBreakdown(grossPool)
+
+	bm.engine.broadcast(GameEvent{
+		Type:       "card.reserved",
+		GameID:     state.Game.ID.String(),
+		CardNumber: cardNumber,
+		UserID:     telegramID,
+		Card:       &card,
+		Players:    len(state.UserCards),
+		Pool:       netPool,
+		GrossPool:  grossPool,
+		HouseCut:   houseCut,
+		Stake:      StakeAmount,
+		Message:    fmt.Sprintf("Card #%d reserved", cardNumber),
+	})
 
 	return nil
 }
@@ -281,10 +302,10 @@ func (e *Engine) reserveCardForBot(state *GameState, telegramID int64, cardNumbe
 // getAvailableCards returns available card numbers
 func (bm *BotManager) getAvailableCards(state *GameState) []int {
 	available := make([]int, 0, 400)
-	reserved := state.ReservedCards
-
+	
+	// ✅ Read lock is handled by caller
 	for i := 1; i <= 400; i++ {
-		if _, ok := reserved[i]; !ok {
+		if _, ok := state.ReservedCards[i]; !ok {
 			available = append(available, i)
 		}
 	}
@@ -323,7 +344,7 @@ func (bm *BotManager) StartBotRoutine() {
 	log.Println("🤖 Bot manager started")
 
 	go func() {
-		ticker := time.NewTicker(5 * time.Second)
+		ticker := time.NewTicker(3 * time.Second) // ✅ Reduced to 3 seconds
 		defer ticker.Stop()
 
 		for {
@@ -359,30 +380,33 @@ func (bm *BotManager) checkAndReserveBots() {
 	}
 
 	state := engine.currentGame
+	
+	// ✅ Quick check with read lock
 	state.mu.RLock()
-	defer state.mu.RUnlock()
-
 	if state.Game.Status != GameStatusWaiting {
+		state.mu.RUnlock()
 		return
 	}
-
-	// Calculate how many bots to add (random 1-5 bots per tick)
-	botCount := rand.Intn(4) + 1
+	
+	currentPlayers := len(state.UserCards)
+	availableCount := 400 - len(state.ReservedCards)
+	state.mu.RUnlock()
 
 	// Don't add bots if we already have many
-	currentPlayers := len(state.UserCards)
 	if currentPlayers > 50 {
 		return
 	}
 
 	// Don't add bots if there aren't enough available cards
-	availableCount := 400 - len(state.ReservedCards)
-	if availableCount < botCount {
+	if availableCount < 2 {
 		return
 	}
 
-	// Add bots with some randomness (40% chance per tick)
-	if rand.Float32() < 0.4 {
+	// Calculate how many bots to add (1-3 bots per tick)
+	botCount := rand.Intn(3) + 1
+
+	// Add bots with some randomness (30% chance per tick)
+	if rand.Float32() < 0.3 {
 		bm.ReserveCardsForBots(botCount)
 	}
 }

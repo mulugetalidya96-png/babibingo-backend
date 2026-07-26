@@ -116,17 +116,19 @@ func (e *Engine) startNewGame() {
 		ReservedCards: make(map[int]int64),
 		UserCards:     make(map[int64][]int),
 	}
-		// ✅ Start bots for this game
+
+	// ✅ Start bots in background - don't block the timer
 	if e.botManager != nil {
-		// Add initial bots (10-20 bots randomly)
-		initialBots := rand.Intn(11) + 10 // 10-20 bots
 		go func() {
-			time.Sleep(2 * time.Second) // Wait a bit for game to initialize
+			// Wait a bit for game to initialize
+			time.Sleep(1 * time.Second)
+			// Add initial bots (5-10 bots randomly)
+			initialBots := rand.Intn(6) + 5 // 5-10 bots
 			e.botManager.ReserveCardsForBots(initialBots)
 		}()
 		
-		// Start the bot routine
-		e.botManager.StartBotRoutine()
+		// Start the bot routine in background
+		go e.botManager.StartBotRoutine()
 	}
 
 	grossPool := 0.0
@@ -147,7 +149,6 @@ func (e *Engine) startNewGame() {
 
 	log.Printf("🟢 New game started: %s", game.ID.String())
 }
-
 // endGame ends the current game
 func (e *Engine) endGame(state *GameState, winner *WinnerInfo) {
 	log.Printf("🏁 Ending game - Winner: %v", winner != nil)
