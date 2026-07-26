@@ -63,6 +63,7 @@ func GetAllCards() []models.CardJSON {
 }
 
 // checkWinPattern checks if a card has a winning pattern
+// checkWinPattern checks if a card has a winning pattern
 func checkWinPattern(card models.CardJSON, marked []int) string {
 	markedSet := make(map[int]bool)
 	for _, n := range marked {
@@ -75,18 +76,17 @@ func checkWinPattern(card models.CardJSON, marked []int) string {
 		grid[i] = make([]*int, 5)
 	}
 
-	// Fill grid
+	// Fill grid correctly
 	for i, n := range card.B {
 		grid[i][0] = &n
 	}
 	for i, n := range card.I {
 		grid[i][1] = &n
 	}
-	grid[0][2] = card.N[0]
-	grid[1][2] = card.N[1]
-	grid[2][2] = nil // Free space
-	grid[3][2] = card.N[3]
-	grid[4][2] = card.N[4]
+	// ✅ N column: card.N is already []*int with nil at position 2
+	for i, n := range card.N {
+		grid[i][2] = n // n is *int or nil
+	}
 	for i, n := range card.G {
 		grid[i][3] = &n
 	}
@@ -94,14 +94,20 @@ func checkWinPattern(card models.CardJSON, marked []int) string {
 		grid[i][4] = &n
 	}
 
-	// Check horizontal
+	// Helper to check if a cell is marked
+	isMarked := func(row, col int) bool {
+		val := grid[row][col]
+		if val == nil {
+			return true // Free space is always marked
+		}
+		return markedSet[*val]
+	}
+
+	// ✅ Check horizontal wins
 	for row := 0; row < 5; row++ {
 		win := true
 		for col := 0; col < 5; col++ {
-			if grid[row][col] == nil {
-				continue
-			}
-			if !markedSet[*grid[row][col]] {
+			if !isMarked(row, col) {
 				win = false
 				break
 			}
@@ -111,14 +117,11 @@ func checkWinPattern(card models.CardJSON, marked []int) string {
 		}
 	}
 
-	// Check vertical
+	// ✅ Check vertical wins
 	for col := 0; col < 5; col++ {
 		win := true
 		for row := 0; row < 5; row++ {
-			if grid[row][col] == nil {
-				continue
-			}
-			if !markedSet[*grid[row][col]] {
+			if !isMarked(row, col) {
 				win = false
 				break
 			}
@@ -128,13 +131,10 @@ func checkWinPattern(card models.CardJSON, marked []int) string {
 		}
 	}
 
-	// Check diagonal (top-left to bottom-right)
+	// ✅ Check diagonal wins (top-left to bottom-right)
 	win := true
 	for i := 0; i < 5; i++ {
-		if grid[i][i] == nil {
-			continue
-		}
-		if !markedSet[*grid[i][i]] {
+		if !isMarked(i, i) {
 			win = false
 			break
 		}
@@ -143,13 +143,10 @@ func checkWinPattern(card models.CardJSON, marked []int) string {
 		return "diagonal"
 	}
 
-	// Check diagonal (top-right to bottom-left)
+	// ✅ Check diagonal wins (top-right to bottom-left)
 	win = true
 	for i := 0; i < 5; i++ {
-		if grid[i][4-i] == nil {
-			continue
-		}
-		if !markedSet[*grid[i][4-i]] {
+		if !isMarked(i, 4-i) {
 			win = false
 			break
 		}
@@ -159,6 +156,95 @@ func checkWinPattern(card models.CardJSON, marked []int) string {
 	}
 
 	return ""
+}
+// verifyWinDoubleCheck verifies a win by counting marked cells in the pattern
+func verifyWinDoubleCheck(card models.CardJSON, marked []int, pattern string) bool {
+	markedSet := make(map[int]bool)
+	for _, n := range marked {
+		markedSet[n] = true
+	}
+
+	// Build grid
+	grid := make([][]*int, 5)
+	for i := range grid {
+		grid[i] = make([]*int, 5)
+	}
+	for i, n := range card.B {
+		grid[i][0] = &n
+	}
+	for i, n := range card.I {
+		grid[i][1] = &n
+	}
+	for i, n := range card.N {
+		grid[i][2] = n
+	}
+	for i, n := range card.G {
+		grid[i][3] = &n
+	}
+	for i, n := range card.O {
+		grid[i][4] = &n
+	}
+
+	isMarked := func(row, col int) bool {
+		val := grid[row][col]
+		if val == nil {
+			return true
+		}
+		return markedSet[*val]
+	}
+
+	switch pattern {
+	case "horizontal":
+		for row := 0; row < 5; row++ {
+			markedCount := 0
+			for col := 0; col < 5; col++ {
+				if isMarked(row, col) {
+					markedCount++
+				}
+			}
+			if markedCount == 5 {
+				return true
+			}
+		}
+		return false
+
+	case "vertical":
+		for col := 0; col < 5; col++ {
+			markedCount := 0
+			for row := 0; row < 5; row++ {
+				if isMarked(row, col) {
+					markedCount++
+				}
+			}
+			if markedCount == 5 {
+				return true
+			}
+		}
+		return false
+
+	case "diagonal":
+		// Top-left to bottom-right
+		markedCount := 0
+		for i := 0; i < 5; i++ {
+			if isMarked(i, i) {
+				markedCount++
+			}
+		}
+		if markedCount == 5 {
+			return true
+		}
+		// Top-right to bottom-left
+		markedCount = 0
+		for i := 0; i < 5; i++ {
+			if isMarked(i, 4-i) {
+				markedCount++
+			}
+		}
+		return markedCount == 5
+
+	default:
+		return false
+	}
 }
 
 // generateRandomCard generates a random bingo card
