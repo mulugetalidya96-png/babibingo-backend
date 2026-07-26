@@ -70,12 +70,18 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 
 		// Create transaction records
 		for _, cardNumber := range state.UserCards[telegramID] {
+			  reference := fmt.Sprintf("stake_%s_%d_%d", 
+                state.Game.ID.String()[:8], 
+                user.ID, 
+                time.Now().UnixNano(),
+            )
 			transaction := models.Transaction{
 				UserID: user.ID,
 				Type:   "stake",
 				Amount: StakeAmount,
 				Status: "completed",
 				Method: "system",
+				 Reference:   reference,
 				Description: fmt.Sprintf("Card #%d for game %s", cardNumber, state.Game.ID.String()),
 				CreatedAt: time.Now(),
 			}
