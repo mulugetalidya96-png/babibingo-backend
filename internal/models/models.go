@@ -92,7 +92,7 @@ type Transaction struct {
 	Amount    float64   `json:"amount"`
 	Status    string    `gorm:"default:'pending'" json:"status"` // pending, completed, failed
 	Method    string    `json:"method"` // telebirr, agent, system
-	Reference string    `json:"reference"`
+	Reference   string    `gorm:"type:varchar(100);uniqueIndex"` 
 	Metadata  *string   `gorm:"type:jsonb" json:"metadata"`
 	CreatedAt time.Time `json:"created_at"`
 	Description string `json:"description"`
