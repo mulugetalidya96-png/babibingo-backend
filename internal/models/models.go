@@ -53,6 +53,7 @@ type Card struct {
 	IsWinner       bool      `gorm:"default:false" json:"is_winner"`
 MarkedNumbers pq.Int64Array `gorm:"type:integer[];default:'{}'" json:"marked_numbers"`
 	CreatedAt      time.Time `json:"created_at"`
+	Status string `gorm:"default:'reserved'"` // "reserved" | "active" | "winner"
 }
 
 // CardJSON represents the BINGO card structure
@@ -93,6 +94,7 @@ type Transaction struct {
 	Reference string    `json:"reference"`
 	Metadata  *string   `gorm:"type:jsonb" json:"metadata"`
 	CreatedAt time.Time `json:"created_at"`
+	Description string `json:"description"`
 }
 
 // GamePlayer tracks who joined a game

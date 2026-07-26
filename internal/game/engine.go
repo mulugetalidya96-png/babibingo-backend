@@ -44,6 +44,8 @@ type GameEvent struct {
 	Timer       int         `json:"timer,omitempty"`
 	Winner      *WinnerInfo `json:"winner,omitempty"`
 	Pool        float64     `json:"pool,omitempty"`
+	GrossPool   float64     `json:"gross_pool,omitempty"`    // Gross pool (before house cut) - NEW
+    HouseCut    float64     `json:"house_cut,omitempty"`
 	Stake       float64     `json:"stake,omitempty"`
 	Message     string      `json:"message,omitempty"`
 	CardNumber  int         `json:"card_number,omitempty"`
@@ -104,7 +106,15 @@ func (e *Engine) Run() {
 		e.tick()
 	}
 }
+// CalculateNetPool returns the prize pool after house cut
+func CalculateNetPool(grossPool float64) float64 {
+    return grossPool * (1 - HouseCutPercent)
+}
 
+// CalculateHouseCut returns the house cut amount
+func CalculateHouseCut(grossPool float64) float64 {
+    return grossPool * HouseCutPercent
+}
 func (e *Engine) tick() {
 	if e.currentGame == nil {
 		e.startNewGame()
@@ -149,132 +159,354 @@ func (e *Engine) tick() {
 }
 
 func (e *Engine) startNewGame() {
-	game := &models.Game{
-		Status:            GameStatusWaiting,
-		StakeAmount:       StakeAmount,
-		MaxCardsPerPlayer: MaxCardsPerPlayer,
-		MaxPlayers:        MaxPlayers,
-		CalledNumbers: pq.Int64Array{},
-		TotalPool:         0,
-	}
+    game := &models.Game{
+        Status:            GameStatusWaiting,
+        StakeAmount:       StakeAmount,
+        MaxCardsPerPlayer: MaxCardsPerPlayer,
+        MaxPlayers:        MaxPlayers,
+        CalledNumbers:     pq.Int64Array{},
+        TotalPool:         0,
+    }
 
-	if err := e.db.Create(game).Error; err != nil {
-		return
-	}
+    if err := e.db.Create(game).Error; err != nil {
+        return
+    }
 
-	e.currentGame = &GameState{
-		Game:       game,
-		Timer:      LobbyDuration,
-		CallIndex:  0,
-		CalledNums: []int{},
-		ReservedCards: make(map[int]int64),
-	UserCards:     make(map[int64][]int),
-	}
+    e.currentGame = &GameState{
+        Game:          game,
+        Timer:         LobbyDuration,
+        CallIndex:     0,
+        CalledNums:    []int{},
+        ReservedCards: make(map[int]int64),
+        UserCards:     make(map[int64][]int),
+    }
 
-	e.broadcast(GameEvent{
-		Type:       "game.new",
-		GameID:     game.ID.String(),
-		Status:     GameStatusWaiting,
-		Timer:      int(LobbyDuration.Seconds()),
-		Players:    0,
-		BoardCount: 0,
-		Pool:       0,
-		Stake:      StakeAmount,
-	})
+    // ✅ Calculate net pool (0 at start)
+    grossPool := 0.0
+    netPool := CalculateNetPool(grossPool)
+    houseCut := CalculateHouseCut(grossPool)
+
+    e.broadcast(GameEvent{
+        Type:       "game.new",
+        GameID:     game.ID.String(),
+        Status:     GameStatusWaiting,
+        Timer:      int(LobbyDuration.Seconds()),
+        Players:    0,
+        BoardCount: 0,
+        Pool:       netPool,        // Net pool
+        GrossPool:  grossPool,      // Gross pool
+        HouseCut:   houseCut,       // House cut
+        Stake:      StakeAmount,
+    })
 }
 func (e *Engine) ReserveCard(userID int64, cardNumber int) error {
-	if e.currentGame == nil {
-		return fmt.Errorf("no active game")
-	}
+    if e.currentGame == nil {
+        return fmt.Errorf("no active game")
+    }
 
-	state := e.currentGame
+    state := e.currentGame
 
-	state.mu.Lock()
-	defer state.mu.Unlock()
+    state.mu.Lock()
+    defer state.mu.Unlock()
 
-	// Only allow reservations before the game starts
-	if state.Game.Status != GameStatusWaiting {
-		return fmt.Errorf("game already started")
-	}
+    // Only allow reservations before the game starts
+    if state.Game.Status != GameStatusWaiting {
+        return fmt.Errorf("game already started")
+    }
 
-	// Check user exists by Telegram ID
-var user models.User
+    // Check user exists by Telegram ID
+    var user models.User
+    if err := e.db.
+        Where("telegram_id = ?", userID).
+        First(&user).Error; err != nil {
+        return fmt.Errorf("user not found")
+    }
 
-if err := e.db.
-	Where("telegram_id = ?", userID).
-	First(&user).Error; err != nil {
-	return fmt.Errorf("user not found")
-}
+    // Check balance (but DON'T deduct yet)
+    if user.Balance < StakeAmount {
+        return fmt.Errorf("insufficient balance")
+    }
 
-	// Check balance (don't deduct yet)
-	if user.Balance < StakeAmount {
-		return fmt.Errorf("insufficient balance")
-	}
+    // Card already reserved?
+    if reservedBy, ok := state.ReservedCards[cardNumber]; ok {
+        if reservedBy == userID {
+            return fmt.Errorf("card already reserved by you")
+        }
+        return fmt.Errorf("card already reserved")
+    }
 
-	// Card already reserved?
-	if reservedBy, ok := state.ReservedCards[cardNumber]; ok {
-		if reservedBy == userID {
-			return fmt.Errorf("card already reserved by you")
-		}
-		return fmt.Errorf("card already reserved")
-	}
+    // Max cards per player
+    if len(state.UserCards[userID]) >= MaxCardsPerPlayer {
+        return fmt.Errorf("maximum %d cards allowed", MaxCardsPerPlayer)
+    }
 
-	// Max cards per player
-	if len(state.UserCards[userID]) >= MaxCardsPerPlayer {
-		return fmt.Errorf("maximum %d cards allowed", MaxCardsPerPlayer)
-	}
+    // Reserve card
+    state.ReservedCards[cardNumber] = userID
+    state.UserCards[userID] = append(
+        state.UserCards[userID],
+        cardNumber,
+    )
 
-	// Reserve card
-	state.ReservedCards[cardNumber] = userID
-	state.UserCards[userID] = append(
-		state.UserCards[userID],
-		cardNumber,
-	)
-	cardData, found := GetCardByID(cardNumber)
-	if !found {
-	return fmt.Errorf("card not found")
-}
-card := models.Card{
-	ID:            uuid.New(),
-	GameID:        state.Game.ID,
-	UserID:        userID,
-	CardNumber:    cardNumber,
-	CardData:      cardData,
-	MarkedNumbers: pq.Int64Array{},
-	IsWinner:      false,
-}
-if err := e.db.Create(&card).Error; err != nil {
-	return fmt.Errorf("failed saving card: %w", err)
-}
-	e.broadcast(GameEvent{
-		Type:       "card.reserved",
-		GameID:     state.Game.ID.String(),
-		CardNumber: cardNumber,
-		UserID:     userID,
-		Card:       &card,
-		Players:    len(state.UserCards),
-	})
+    // Update gross pool
+    state.Game.TotalPool = float64(len(state.ReservedCards)) * StakeAmount
+    
+    // Create card record with pending status
+    cardData, found := GetCardByID(cardNumber)
+    if !found {
+        return fmt.Errorf("card not found")
+    }
 
-	return nil
+    card := models.Card{
+        ID:            uuid.New(),
+        GameID:        state.Game.ID,
+        UserID:        userID,
+        CardNumber:    cardNumber,
+        CardData:      cardData,
+        MarkedNumbers: pq.Int64Array{},
+        IsWinner:      false,
+        Status:        "reserved",
+    }
+    if err := e.db.Create(&card).Error; err != nil {
+        // Rollback reservation if card creation fails
+        delete(state.ReservedCards, cardNumber)
+        userCards := state.UserCards[userID]
+        for i, num := range userCards {
+            if num == cardNumber {
+                state.UserCards[userID] = append(userCards[:i], userCards[i+1:]...)
+                break
+            }
+        }
+        state.Game.TotalPool = float64(len(state.ReservedCards)) * StakeAmount
+        return fmt.Errorf("failed saving card: %w", err)
+    }
+
+    // ✅ Calculate net pool and house cut
+    grossPool := state.Game.TotalPool
+    netPool := CalculateNetPool(grossPool)
+    houseCut := CalculateHouseCut(grossPool)
+
+    // ✅ Broadcast with both gross and net pools
+    e.broadcast(GameEvent{
+        Type:       "card.reserved",
+        GameID:     state.Game.ID.String(),
+        CardNumber: cardNumber,
+        UserID:     userID,
+        Card:       &card,
+        Players:    len(state.UserCards),
+        Pool:       netPool,        // Net pool (after house cut)
+        GrossPool:  grossPool,      // Gross pool (before house cut)
+        HouseCut:   houseCut,       // House cut amount
+        Stake:      StakeAmount,
+        Message:    fmt.Sprintf("Card #%d reserved! Prize Pool: $%.2f (House: $%.2f)", 
+            cardNumber, netPool, houseCut),
+    })
+
+    return nil
 }
 
 func (e *Engine) startCalling(state *GameState) {
-	state.Game.Status = GameStatusCalling
-	state.Game.StartedAt = func() *time.Time { t := time.Now(); return &t }()
-	state.Timer = CallInterval
+    state.mu.Lock()
+    defer state.mu.Unlock()
+    
+    // Deduct stakes from all players with reserved cards
+    if err := e.collectAllStakes(state); err != nil {
+        e.broadcast(GameEvent{
+            Type:    "game.error",
+            Message: fmt.Sprintf("Failed to collect stakes: %v", err),
+        })
+        return
+    }
+    
+    state.Game.Status = GameStatusCalling
+    state.Game.StartedAt = func() *time.Time { t := time.Now(); return &t }()
+    state.Timer = CallInterval
 
-	e.db.Save(state.Game)
+    e.db.Save(state.Game)
 
-	e.broadcast(GameEvent{
-		Type:       "game.started",
-		GameID:     state.Game.ID.String(),
-		Status:     GameStatusCalling,
-		Players:    e.getPlayerCount(state.Game.ID),
-		BoardCount: e.getBoardCount(state.Game.ID),
-		Pool:       state.Game.TotalPool,
-	})
+    // ✅ Calculate net pool and house cut
+    grossPool := state.Game.TotalPool
+    netPool := CalculateNetPool(grossPool)
+    houseCut := CalculateHouseCut(grossPool)
+
+    e.broadcast(GameEvent{
+        Type:       "game.started",
+        GameID:     state.Game.ID.String(),
+        Status:     GameStatusCalling,
+        Players:    e.getPlayerCount(state.Game.ID),
+        BoardCount: e.getBoardCount(state.Game.ID),
+        Pool:       netPool,        // Net pool
+        GrossPool:  grossPool,      // Gross pool
+        HouseCut:   houseCut,       // House cut
+    })
 }
 
+// ✅ NEW: Collect stakes from all players with reserved cards
+func (e *Engine) collectAllStakes(state *GameState) error {
+    // Get all unique user IDs with reservations
+    userIDs := make(map[int64]bool)
+    for _, userID := range state.ReservedCards {
+        userIDs[userID] = true
+    }
+    
+    // Use a database transaction for atomicity
+    tx := e.db.Begin()
+    defer func() {
+        if r := recover(); r != nil {
+            tx.Rollback()
+        }
+    }()
+    
+    totalPool := 0.0
+    
+    for userID := range userIDs {
+        // Count cards for this user
+        cardCount := len(state.UserCards[userID])
+        totalStake := float64(cardCount) * StakeAmount
+        
+        // Get user
+        var user models.User
+        if err := tx.Where("id = ?", userID).First(&user).Error; err != nil {
+            tx.Rollback()
+            return fmt.Errorf("user %d not found: %w", userID, err)
+        }
+        
+        // Check balance
+        if user.Balance < totalStake {
+            tx.Rollback()
+            return fmt.Errorf("user %d has insufficient balance: need %.2f, have %.2f", 
+                userID, totalStake, user.Balance)
+        }
+        
+        // Deduct balance
+        user.Balance -= totalStake
+        if err := tx.Save(&user).Error; err != nil {
+            tx.Rollback()
+            return fmt.Errorf("failed to deduct balance for user %d: %w", userID, err)
+        }
+        
+        // Create transaction records for each card
+        for _, cardNumber := range state.UserCards[userID] {
+            transaction := models.Transaction{
+                UserID: userID,
+                Type:   "stake",
+                Amount: StakeAmount,
+                Status: "completed",
+                Method: "system",
+                Description: fmt.Sprintf("Card #%d for game %s", cardNumber, state.Game.ID.String()),
+            }
+            if err := tx.Create(&transaction).Error; err != nil {
+                tx.Rollback()
+                return fmt.Errorf("failed to create transaction for user %d: %w", userID, err)
+            }
+        }
+        
+        // Update GamePlayer record
+        var gamePlayer models.GamePlayer
+        result := tx.Where("game_id = ? AND user_id = ?", state.Game.ID, userID).First(&gamePlayer)
+        if result.Error != nil {
+            gamePlayer = models.GamePlayer{
+                GameID:     state.Game.ID,
+                UserID:     userID,
+                CardsCount: cardCount,
+                TotalStake: totalStake,
+            }
+            if err := tx.Create(&gamePlayer).Error; err != nil {
+                tx.Rollback()
+                return fmt.Errorf("failed to create game player: %w", err)
+            }
+        } else {
+            gamePlayer.CardsCount = cardCount
+            gamePlayer.TotalStake = totalStake
+            if err := tx.Save(&gamePlayer).Error; err != nil {
+                tx.Rollback()
+                return fmt.Errorf("failed to update game player: %w", err)
+            }
+        }
+        
+        // Update card status from "reserved" to "active"
+        if err := tx.Model(&models.Card{}).
+            Where("game_id = ? AND user_id = ?", state.Game.ID, userID).
+            Update("status", "active").Error; err != nil {
+            tx.Rollback()
+            return fmt.Errorf("failed to update card status: %w", err)
+        }
+        
+        totalPool += totalStake
+    }
+    
+    // Update the game's total pool
+    state.Game.TotalPool = totalPool
+    if err := tx.Save(state.Game).Error; err != nil {
+        tx.Rollback()
+        return fmt.Errorf("failed to update game pool: %w", err)
+    }
+    
+    // Commit transaction
+    if err := tx.Commit().Error; err != nil {
+        return fmt.Errorf("failed to commit transaction: %w", err)
+    }
+    
+    return nil
+}
+func (e *Engine) CancelReservation(userID int64, cardNumber int) error {
+    if e.currentGame == nil {
+        return fmt.Errorf("no active game")
+    }
+
+    state := e.currentGame
+    state.mu.Lock()
+    defer state.mu.Unlock()
+
+    if state.Game.Status != GameStatusWaiting {
+        return fmt.Errorf("game already started - cannot cancel")
+    }
+
+    // Check if card is reserved by this user
+    if reservedBy, ok := state.ReservedCards[cardNumber]; !ok || reservedBy != userID {
+        return fmt.Errorf("card not reserved by you")
+    }
+
+    // Remove reservation
+    delete(state.ReservedCards, cardNumber)
+    
+    // Remove from UserCards
+    userCards := state.UserCards[userID]
+    for i, num := range userCards {
+        if num == cardNumber {
+            state.UserCards[userID] = append(userCards[:i], userCards[i+1:]...)
+            break
+        }
+    }
+    
+    // Delete the card record
+    if err := e.db.Where("game_id = ? AND card_number = ? AND user_id = ?", 
+        state.Game.ID, cardNumber, userID).
+        Delete(&models.Card{}).Error; err != nil {
+        return fmt.Errorf("failed to delete card: %w", err)
+    }
+    
+    // Recalculate pool
+    state.Game.TotalPool = float64(len(state.ReservedCards)) * StakeAmount
+    e.db.Save(state.Game)
+    
+    // ✅ Calculate net pool and house cut
+    grossPool := state.Game.TotalPool
+    netPool := CalculateNetPool(grossPool)
+    houseCut := CalculateHouseCut(grossPool)
+    
+    e.broadcast(GameEvent{
+        Type:       "card.cancelled",
+        GameID:     state.Game.ID.String(),
+        CardNumber: cardNumber,
+        UserID:     userID,
+        Pool:       netPool,        // Net pool
+        GrossPool:  grossPool,      // Gross pool
+        HouseCut:   houseCut,       // House cut
+        Message:    fmt.Sprintf("Card #%d cancelled. Prize Pool: $%.2f", cardNumber, netPool),
+    })
+    
+    return nil
+}
 func (e *Engine) callNextNumber(state *GameState) {
 	// Generate random number 1-75 that hasn't been called
 	available := make([]int, 0, 75-len(state.CalledNums))
@@ -336,44 +568,49 @@ func (e *Engine) autoMarkCards(gameID uuid.UUID, number int) {
 }
 
 func (e *Engine) ClaimBingo(userID int64, cardID uuid.UUID) (*GameEvent, error) {
-	if e.currentGame == nil || e.currentGame.Game.Status != GameStatusCalling {
-		return nil, fmt.Errorf("no active game")
-	}
+    if e.currentGame == nil || e.currentGame.Game.Status != GameStatusCalling {
+        return nil, fmt.Errorf("no active game")
+    }
 
-	state := e.currentGame
-	var card models.Card
-	if err := e.db.Where("id = ? AND user_id = ? AND game_id = ?", cardID, userID, state.Game.ID).First(&card).Error; err != nil {
-		return nil, fmt.Errorf("card not found")
-	}
+    state := e.currentGame
+    var card models.Card
+    if err := e.db.Where("id = ? AND user_id = ? AND game_id = ?", cardID, userID, state.Game.ID).First(&card).Error; err != nil {
+        return nil, fmt.Errorf("card not found")
+    }
 
-	// Check if card has a winning pattern
-	pattern := checkWinPattern(card.CardData,int64SliceToInt(card.MarkedNumbers),)
-	if pattern == "" {
-		return nil, fmt.Errorf("no winning pattern")
-	}
+    // Check if card has a winning pattern
+    pattern := checkWinPattern(card.CardData, int64SliceToInt(card.MarkedNumbers))
+    if pattern == "" {
+        return nil, fmt.Errorf("no winning pattern")
+    }
 
-	// Winner found!
-	var user models.User
-	e.db.First(&user, userID)
+    // Winner found!
+    var user models.User
+    e.db.First(&user, userID)
 
-	prize := state.Game.TotalPool * (1 - HouseCutPercent)
+    // ✅ Calculate prize with house cut
+    grossPool := state.Game.TotalPool
+    prize := CalculateNetPool(grossPool)  // Apply house cut here
+    houseCut := CalculateHouseCut(grossPool)
 
-	winner := &WinnerInfo{
-		UserID:     userID,
-		Name:       user.FirstName,
-		Phone:      maskPhone(user.PhoneNumber),
-		Prize:      prize,
-		CardNumber: card.CardNumber,
-		Pattern:    pattern,
-	}
+    winner := &WinnerInfo{
+        UserID:     userID,
+        Name:       user.FirstName,
+        Phone:      maskPhone(user.PhoneNumber),
+        Prize:      prize,
+        CardNumber: card.CardNumber,
+        Pattern:    pattern,
+    }
 
-	e.endGame(state, winner)
+    e.endGame(state, winner)
 
-	return &GameEvent{
-		Type:   "game.winner",
-		Winner: winner,
-		Pool:   state.Game.TotalPool,
-	}, nil
+    return &GameEvent{
+        Type:   "game.winner",
+        Winner: winner,
+        Pool:   prize,           // Net pool (prize)
+        GrossPool: grossPool,    // Gross pool
+        HouseCut: houseCut,      // House cut
+    }, nil
 }
 func int64SliceToInt(input []int64) []int {
 	result := make([]int, len(input))
@@ -574,6 +811,8 @@ type GameStateResponse struct {
 	Players    int            `json:"players"`
 	BoardCount int            `json:"board_count"`
 	Pool       float64        `json:"pool"`
+	GrossPool     float64        `json:"gross_pool"`     // Gross pool (before house cut) - NEW
+    HouseCut      float64        `json:"house_cut"` 
 	Called     []string       `json:"called"`
 	MyCards    []models.Card  `json:"my_cards"`
 	MaxCards   int            `json:"max_cards"`
