@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"babibingo/internal/config"
 	"context"
 	"log"
 
@@ -15,7 +16,7 @@ type Bot struct {
 
 	db  *gorm.DB
 	rdb *redis.Client
-
+    cfg *config.Config
 	webAppURL string
 }
 

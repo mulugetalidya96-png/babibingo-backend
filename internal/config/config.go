@@ -9,6 +9,7 @@ type Config struct {
 	WebAppURL   string
 	JWTSecret   string
 	Bot BotConfig `json:"bot"`
+	VerifyAPIKey string `env:"VERIFY_API_KEY" default:""`
 }
 type BotConfig struct {
 	Enabled         bool `json:"enabled"`
