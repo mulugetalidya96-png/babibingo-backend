@@ -54,7 +54,7 @@ var (
 		"Abdi", "Bontu", "Cherinet", "Diribe", "Eyob",
 		"Feven", "Getachew", "Mekdes", "Nardos", "Tamrat",
 	}
-	
+
 	lastNames = []string{
 		"Alemayehu", "Bekele", "Chala", "Demeke", "Eshetu",
 		"Girma", "Haile", "Kebede", "Lemma", "Mekonnen",
@@ -63,9 +63,9 @@ var (
 		"Gizaw", "Hailu", "Kassa", "Lema", "Mulugeta",
 		"Nega", "Tilahun", "Wondimu", "Yohannes", "Zewdie",
 	}
-	
+
 	phonePrefixes = []string{
-		"091", "092", "093", "094", "095", 
+		"091", "092", "093", "094", "095",
 		"096", "097", "098", "099", "090",
 	}
 )
@@ -93,6 +93,23 @@ func generateUniqueTelegramID(existingIDs map[int64]bool) int64 {
 		if !existingIDs[id] {
 			existingIDs[id] = true
 			return id
+		}
+	}
+}
+
+// generateReferralCode generates a unique referral code
+func generateReferralCode(existingCodes map[string]bool) string {
+	const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	for {
+		// Generate 8-character code
+		b := make([]byte, 8)
+		for i := range b {
+			b[i] = letters[rand.Intn(len(letters))]
+		}
+		code := string(b)
+		if !existingCodes[code] {
+			existingCodes[code] = true
+			return code
 		}
 	}
 }
@@ -143,15 +160,15 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 		count = len(availableCards)
 	}
 
-	// Get existing Telegram IDs from database to avoid conflicts
-	existingIDs := bm.getExistingUserIDs()
+	// Get existing IDs and referral codes from database
+	existingIDs, existingCodes := bm.getExistingUserData()
 
 	log.Printf("🤖 Creating %d bots...", count)
 
 	// Create and reserve cards for bots
 	botsReserved := 0
 	for i := 0; i < count && i < len(availableCards); i++ {
-		// Create bot
+		// Create bot (pass only existingIDs)
 		bot := bm.CreateBot(existingIDs)
 		
 		// Get a random available card
@@ -159,14 +176,21 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 		cardNumber := availableCards[cardIndex]
 		availableCards = append(availableCards[:cardIndex], availableCards[cardIndex+1:]...)
 
-		// Create user in database
+		// Generate a unique referral code for this bot
+		referralCode := generateReferralCode(existingCodes)
+
+		// Create user in database with unique referral code
 		user := &models.User{
-			TelegramID: bot.TelegramID,
-			FirstName:  bot.Name,
-			LastName:   "",
-			PhoneNumber: bot.Phone,
-			Balance:    1000.0, // Give bots some balance
+			TelegramID:   bot.TelegramID,
+			FirstName:    bot.Name,
+			LastName:     "",
+			PhoneNumber:  bot.Phone,
+			Balance:      1000.0, // Give bots some balance
+			ReferralCode: referralCode,
+			CreatedAt:    time.Now(),
+			LastActive:   time.Now(),
 		}
+		
 		if err := engine.db.Create(user).Error; err != nil {
 			log.Printf("⚠️ Failed to create bot user: %v", err)
 			continue
@@ -267,16 +291,22 @@ func (bm *BotManager) getAvailableCards(state *GameState) []int {
 	return available
 }
 
-// getExistingUserIDs gets existing Telegram IDs from database
-func (bm *BotManager) getExistingUserIDs() map[int64]bool {
+// getExistingUserData gets existing user IDs and referral codes from database
+func (bm *BotManager) getExistingUserData() (map[int64]bool, map[string]bool) {
 	var users []models.User
 	bm.engine.db.Find(&users)
-	
+
 	existingIDs := make(map[int64]bool)
+	existingCodes := make(map[string]bool)
+
 	for _, user := range users {
 		existingIDs[user.TelegramID] = true
+		if user.ReferralCode != "" {
+			existingCodes[user.ReferralCode] = true
+		}
 	}
-	return existingIDs
+
+	return existingIDs, existingCodes
 }
 
 // StartBotRoutine starts the bot reservation routine
@@ -287,6 +317,7 @@ func (bm *BotManager) StartBotRoutine() {
 		return
 	}
 	bm.isRunning = true
+	bm.stopChan = make(chan bool)
 	bm.mu.Unlock()
 
 	log.Println("🤖 Bot manager started")
@@ -313,7 +344,10 @@ func (bm *BotManager) StopBotRoutine() {
 	defer bm.mu.Unlock()
 	if bm.isRunning {
 		bm.isRunning = false
-		close(bm.stopChan)
+		select {
+		case bm.stopChan <- true:
+		default:
+		}
 	}
 }
 
@@ -333,8 +367,8 @@ func (bm *BotManager) checkAndReserveBots() {
 	}
 
 	// Calculate how many bots to add (random 1-5 bots per tick)
-	botCount := rand.Intn(4) + 1 // 1-4 bots
-	
+	botCount := rand.Intn(4) + 1
+
 	// Don't add bots if we already have many
 	currentPlayers := len(state.UserCards)
 	if currentPlayers > 50 {
@@ -347,7 +381,7 @@ func (bm *BotManager) checkAndReserveBots() {
 		return
 	}
 
-	// Add bots with some randomness (50% chance per tick)
+	// Add bots with some randomness (40% chance per tick)
 	if rand.Float32() < 0.4 {
 		bm.ReserveCardsForBots(botCount)
 	}
