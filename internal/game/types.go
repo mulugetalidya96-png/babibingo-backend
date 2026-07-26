@@ -16,6 +16,7 @@ type GameEvent struct {
 	BoardCount  int         `json:"board_count,omitempty"`
 	Timer       int         `json:"timer,omitempty"`
 	Winner      *WinnerInfo `json:"winner,omitempty"`
+	Winners     []WinnerInfo `json:"winners,omitempty"` 
 	Pool        float64     `json:"pool,omitempty"`
 	GrossPool   float64     `json:"gross_pool,omitempty"`
 	HouseCut    float64     `json:"house_cut,omitempty"`

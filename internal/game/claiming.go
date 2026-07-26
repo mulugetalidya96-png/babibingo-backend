@@ -3,12 +3,11 @@ package game
 import (
 	"babibingo/internal/models"
 	"fmt"
-	"log"
 
 	"github.com/google/uuid"
 )
 
-// ClaimBingo handles a bingo claim
+// ClaimBingo handles a manual bingo claim (if you still want to allow this)
 func (e *Engine) ClaimBingo(telegramID int64, cardID uuid.UUID) (*GameEvent, error) {
 	if e.currentGame == nil || e.currentGame.Game.Status != GameStatusCalling {
 		return nil, fmt.Errorf("no active game")
@@ -27,35 +26,40 @@ func (e *Engine) ClaimBingo(telegramID int64, cardID uuid.UUID) (*GameEvent, err
 		return nil, fmt.Errorf("card not found")
 	}
 
+	// Check if card already won
+	if card.IsWinner {
+		return nil, fmt.Errorf("this card already won")
+	}
+
 	pattern := checkWinPattern(card.CardData, int64SliceToInt(card.MarkedNumbers))
 	if pattern == "" {
 		return nil, fmt.Errorf("no winning pattern")
 	}
 
-	// Winner!
-	grossPool := state.Game.TotalPool
-	prize := CalculateNetPool(grossPool)
-	houseCut := CalculateHouseCut(grossPool)
+	// ✅ Mark card as winner
+	card.IsWinner = true
+	e.db.Save(&card)
 
-	winner := &WinnerInfo{
-		UserID:     telegramID,
-		Name:       user.FirstName,
-		Phone:      maskPhone(user.PhoneNumber),
-		Prize:      prize,
-		CardNumber: card.CardNumber,
-		Pattern:    pattern,
+	// Get all winners (including this one)
+	winners := e.checkAllCardsForWinners(state.Game.ID, state)
+	
+	if len(winners) > 0 {
+		e.handleWinners(state, winners)
 	}
-
-	log.Printf("🎉 BINGO! User %d won with card %d (Pattern: %s)", telegramID, card.CardNumber, pattern)
-
-	e.endGame(state, winner)
 
 	return &GameEvent{
 		Type:      "game.winner",
-		Winner:    winner,
-		Pool:      prize,
-		GrossPool: grossPool,
-		HouseCut:  houseCut,
+		Winner: &WinnerInfo{
+			UserID:     telegramID,
+			Name:       user.FirstName + " " + user.LastName,
+			Phone:      maskPhone(user.PhoneNumber),
+			Prize:      CalculateNetPool(state.Game.TotalPool),
+			CardNumber: card.CardNumber,
+			Pattern:    pattern,
+		},
+		Pool:      CalculateNetPool(state.Game.TotalPool),
+		GrossPool: state.Game.TotalPool,
+		HouseCut:  CalculateHouseCut(state.Game.TotalPool),
 	}, nil
 }
 
