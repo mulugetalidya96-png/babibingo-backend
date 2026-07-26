@@ -222,6 +222,16 @@ func handleWSMessage(client *WSClient, engine *Engine, req WSRequest) {
 		})
 		return
 	}
+	case "card.cancel": // ✅ NEW: Handle card cancellation
+		log.Printf("[WS] User %d cancelling card %d", client.UserID, req.CardNumber)
+		err := engine.CancelReservation(client.UserID, req.CardNumber)
+		if err != nil {
+			sendToClient(client, WSResponse{
+				Type:    "error",
+				Message: err.Error(),
+			})
+			return
+		}
 	case "game.state":
 		state, err := engine.GetGameState(client.UserID)
 		if err != nil {
