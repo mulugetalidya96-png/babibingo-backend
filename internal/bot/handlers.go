@@ -68,6 +68,10 @@ func (b *Bot) handleMessage(ctx context.Context, msg *telego.Message) {
 
 // internal/bot/handlers.go - handleTelebirrSMS
 
+// internal/bot/handlers.go - handleTelebirrSMS
+
+// internal/bot/handlers.go - handleTelebirrSMS
+
 func (b *Bot) handleTelebirrSMS(
 	ctx context.Context,
 	chatID int64,
@@ -88,18 +92,42 @@ func (b *Bot) handleTelebirrSMS(
 		return
 	}
 
-	// 3️⃣ Check config
+	// ✅ 3️⃣ Check for duplicate transaction
+	var existingTransaction models.Transaction
+	err := b.db.Where("reference = ?", txnInfo.TransactionID).First(&existingTransaction).Error
+	if err == nil {
+		// Transaction already exists
+		b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+			"⚠️ *Duplicate Transaction Detected*\n\n"+
+				"Transaction `%s` has already been processed.\n\n"+
+				"📅 Processed: %s\n"+
+				"💰 Amount: %.2f ETB\n"+
+				"📊 Status: %s\n\n"+
+				"If you believe this is an error, please contact support.",
+			txnInfo.TransactionID,
+			existingTransaction.CreatedAt.Format("2006-01-02 15:04:05"),
+			existingTransaction.Amount,
+			existingTransaction.Status,
+		))
+		return
+	}
+
+	// 4️⃣ Check config
 	if b.cfg == nil || b.cfg.VerifyAPIKey == "" {
 		b.sendText(ctx, chatID, "❌ Verify.et API key is not configured. Please contact support.")
 		return
 	}
 
-	// 4️⃣ Send processing message
-	b.sendText(ctx, chatID, "⏳ Verifying transaction")
+	// 5️⃣ Send processing message
+	b.sendText(ctx, chatID, "⏳ Verifying transaction with verify.et...")
 
-	// 5️⃣ Get phone number
-	babiBingoPhone := "0997325583"
-	// 6️⃣ Call verify.et API
+	// 6️⃣ Get phone number
+	babiBingoPhone := b.cfg.BabiBingoPhone
+	if babiBingoPhone == "" {
+		babiBingoPhone = "0940072277"
+	}
+
+	// 7️⃣ Call verify.et API
 	verifyClient := verify.NewVerifyClient(b.cfg.VerifyAPIKey)
 	verifyResp, err := verifyClient.VerifyTransaction(
 		txnInfo.TransactionID,
@@ -115,7 +143,7 @@ func (b *Bot) handleTelebirrSMS(
 		return
 	}
 
-	// 7️⃣ Check if verification was successful
+	// 8️⃣ Check if verification was successful
 	if !verifyResp.Success {
 		b.sendText(ctx, chatID, fmt.Sprintf(
 			"❌ Transaction verification failed: %s",
@@ -124,7 +152,7 @@ func (b *Bot) handleTelebirrSMS(
 		return
 	}
 
-	// 8️⃣ Check data array
+	// 9️⃣ Check data array
 	if len(verifyResp.Data) == 0 {
 		b.sendText(ctx, chatID, "❌ No transaction data found. Please try again.")
 		return
@@ -132,7 +160,7 @@ func (b *Bot) handleTelebirrSMS(
 
 	txnData := verifyResp.Data[0]
 
-	// 9️⃣ Check if verified
+	// 🔟 Check if verified
 	if !txnData.Verified {
 		b.sendText(ctx, chatID, fmt.Sprintf(
 			"❌ Transaction not verified. Status: %s",
@@ -141,7 +169,7 @@ func (b *Bot) handleTelebirrSMS(
 		return
 	}
 
-	// 🔟 Check settlement account match
+	// 1️⃣1️⃣ Check settlement account match
 	if !txnData.SettlementAccountMatch.Matched {
 		b.sendText(ctx, chatID, fmt.Sprintf(
 			"❌ Transaction sent to wrong account.\n\n"+
@@ -154,7 +182,14 @@ func (b *Bot) handleTelebirrSMS(
 		return
 	}
 
-	// 1️⃣1️⃣ Update user balance
+	// ✅ 1️⃣2️⃣ Double-check duplicate before saving (race condition protection)
+	var checkDuplicate models.Transaction
+	if err := b.db.Where("reference = ?", txnInfo.TransactionID).First(&checkDuplicate).Error; err == nil {
+		b.sendText(ctx, chatID, "⚠️ This transaction was already processed by another request.")
+		return
+	}
+
+	// 1️⃣3️⃣ Update user balance
 	dbUser.Balance += txnInfo.Amount
 	if err := b.db.Save(&dbUser).Error; err != nil {
 		log.Printf("Failed to update balance: %v", err)
@@ -162,7 +197,7 @@ func (b *Bot) handleTelebirrSMS(
 		return
 	}
 
-	// 1️⃣2️⃣ Create transaction record
+	// 1️⃣4️⃣ Create transaction record
 	transaction := models.Transaction{
 		UserID:    dbUser.ID,
 		Type:      "deposit",
@@ -170,13 +205,21 @@ func (b *Bot) handleTelebirrSMS(
 		Status:    "completed",
 		Method:    "telebirr",
 		Reference: txnInfo.TransactionID,
+		Description: fmt.Sprintf("Telebirr deposit via SMS - Transaction: %s", txnInfo.TransactionID),
 		CreatedAt: time.Now(),
 	}
 	if err := b.db.Create(&transaction).Error; err != nil {
+		// ✅ If duplicate is created between check and save
+		if strings.Contains(err.Error(), "duplicate") {
+			b.sendText(ctx, chatID, "⚠️ This transaction was already processed. Please check your balance.")
+			return
+		}
 		log.Printf("Failed to create transaction record: %v", err)
+		b.sendText(ctx, chatID, "❌ Failed to create transaction record. Please contact support.")
+		return
 	}
 
-	// 1️⃣3️⃣ Send success message
+	// 1️⃣5️⃣ Send success message
 	b.sendMarkdown(ctx, chatID, fmt.Sprintf(
 		"✅ *Deposit Successful!*\n\n"+
 			"💰 Amount: %.2f ETB\n"+
