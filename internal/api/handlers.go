@@ -6,6 +6,7 @@ import (
 	"babibingo/internal/models"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -316,5 +317,32 @@ func (h *Handler) ToggleBots(c *gin.Context) {
 	
 	c.JSON(http.StatusOK, gin.H{
 		"enabled": req.Enabled,
+	})
+}
+// internal/api/handlers.go
+
+// GetUserBalance returns the user's balance
+func (h *Handler) GetUserBalance(c *gin.Context) {
+	telegramIDStr := c.Query("telegram_id")
+	if telegramIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "telegram_id is required"})
+		return
+	}
+
+	telegramID, err := strconv.ParseInt(telegramIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid telegram_id"})
+		return
+	}
+
+	var user models.User
+	if err := h.db.Where("telegram_id = ?", telegramID).First(&user).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"balance": user.Balance,
+		"telegram_id": user.TelegramID,
 	})
 }

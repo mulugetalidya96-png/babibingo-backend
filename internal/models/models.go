@@ -25,6 +25,7 @@ type User struct {
 	AgentBalance  float64   `gorm:"default:0" json:"agent_balance"`
 	CreatedAt     time.Time `json:"created_at"`
 	LastActive    time.Time `json:"last_active"`
+	IsBot        bool      `gorm:"default:false;index"`
 }
 
 // Game represents a BINGO game round

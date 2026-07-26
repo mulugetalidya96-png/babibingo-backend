@@ -24,7 +24,8 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, rdb *redis.Client, engine *game.
 	r.GET("/health", h.Health)
 	r.POST("/auth/telegram", h.AuthTelegram)
 	r.GET("/game/current", h.GetCurrentGame)
-
+    
+	r.GET("/user/balance", h.GetUserBalance)
 	// Protected routes
 	api := r.Group("/api")
 	api.Use(JWTMiddleware(cfg))
