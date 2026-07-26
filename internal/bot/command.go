@@ -172,22 +172,90 @@ func (b *Bot) handleBalance(
 		),
 	)
 }
+// handleDeposit handles deposit requests with bank selection
 func (b *Bot) handleDeposit(
 	ctx context.Context,
 	chatID int64,
 ) {
+	// ✅ First ask user to choose their bank
+	msg := telego.SendMessageParams{
+		ChatID: telego.ChatID{
+			ID: chatID,
+		},
+		Text: "💳 *Select Deposit Method*\n\n" +
+			"Choose your preferred payment method:",
+		ParseMode: "Markdown",
+		ReplyMarkup: b.bankSelectionKeyboard(),
+	}
 
+	b.sendMessage(ctx, &msg)
+}
+
+// ✅ New: Bank selection keyboard
+func (b *Bot) bankSelectionKeyboard() *telego.InlineKeyboardMarkup {
+	return &telego.InlineKeyboardMarkup{
+		InlineKeyboard: [][]telego.InlineKeyboardButton{
+			{
+				{
+					Text:         "📱 Telebirr",
+					CallbackData: "deposit_telebirr",
+				},
+				{
+					Text:         "🏦 CBE Birr",
+					CallbackData: "deposit_cbebirr",
+				},
+			},
+			{
+				{
+					Text:         "🔙 Back",
+					CallbackData: "back_to_menu",
+				},
+			},
+		},
+	}
+}
+
+
+
+// ✅ Telebirr deposit info
+func (b *Bot) sendTelebirrDepositInfo(
+	ctx context.Context,
+	chatID int64,
+) {
 	b.sendMarkdown(
 		ctx,
 		chatID,
+		"📱 *Telebirr Deposit*\n\n"+
+			"1️⃣ Open Telebirr app\n"+
+			"2️⃣ Send money to:\n"+
+			"   `0940072277` — BabiBingo\n"+
+			"3️⃣ Copy the confirmation code\n"+
+			"4️⃣ Submit code in WebApp\n\n"+
+			"💰 *Minimum Deposit:* 20 ETB\n"+
+			"⏱️ *Processing Time:* 1-2 minutes\n\n"+
+			"⚠️ Include your Telegram username in the reference.",
+	)
+}
 
-		"💳 *Deposit via Telebirr*\n\n"+
-			"Account: `0940072277` — BabiBingo\n\n"+
-			"1️⃣ Open Telebirr\n"+
-			"2️⃣ Send money\n"+
-			"3️⃣ Copy confirmation code\n"+
-			"4️⃣ Submit in WebApp\n\n"+
-			"Balance updates within 1-2 minutes.",
+// ✅ CBE Birr deposit info
+func (b *Bot) sendCBEBirrDepositInfo(
+	ctx context.Context,
+	chatID int64,
+) {
+	b.sendMarkdown(
+		ctx,
+		chatID,
+		"🏦 *CBE Birr Deposit*\n\n"+
+			"1️⃣ Open CBE Birr app\n"+
+			"2️⃣ Send money to:\n"+
+			"   Account: `1000123456789`\n"+
+			"   Name: BabiBingo\n"+
+			"   Bank: Commercial Bank of Ethiopia\n"+
+			"3️⃣ Copy the transaction reference\n"+
+			"4️⃣ Submit reference in WebApp\n\n"+
+			"💰 *Minimum Deposit:* 20 ETB\n"+
+			"⏱️ *Processing Time:* 1-5 minutes\n\n"+
+			"⚠️ Include your Telegram username in the reference.",
 	)
 }
 func (b *Bot) handleWithdraw(
