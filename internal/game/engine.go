@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"sort"
 	"sync"
@@ -204,7 +205,11 @@ func (e *Engine) startNewGame() {
     })
 }
 func (e *Engine) ReserveCard(userID int64, cardNumber int) error {
+    // ✅ Add debug log
+    log.Printf("🔵 ReserveCard called: userID=%d, cardNumber=%d", userID, cardNumber)
+    
     if e.currentGame == nil {
+        log.Printf("🔴 Error: No active game")
         return fmt.Errorf("no active game")
     }
 
@@ -215,6 +220,7 @@ func (e *Engine) ReserveCard(userID int64, cardNumber int) error {
 
     // Only allow reservations before the game starts
     if state.Game.Status != GameStatusWaiting {
+        log.Printf("🔴 Error: Game already started - status: %s", state.Game.Status)
         return fmt.Errorf("game already started")
     }
 
@@ -223,11 +229,13 @@ func (e *Engine) ReserveCard(userID int64, cardNumber int) error {
     if err := e.db.
         Where("telegram_id = ?", userID).
         First(&user).Error; err != nil {
+        log.Printf("🔴 Error: User not found - telegram_id: %d", userID)
         return fmt.Errorf("user not found")
     }
 
     // Check balance (but DON'T deduct yet)
     if user.Balance < StakeAmount {
+        log.Printf("🔴 Error: Insufficient balance - user: %d, balance: %.2f", userID, user.Balance)
         return fmt.Errorf("insufficient balance")
     }
 
@@ -254,11 +262,24 @@ func (e *Engine) ReserveCard(userID int64, cardNumber int) error {
     // Update gross pool
     state.Game.TotalPool = float64(len(state.ReservedCards)) * StakeAmount
     
-    // Create card record with pending status
+    // ✅ Get card data with debug
+    log.Printf("🟡 Looking for card: %d", cardNumber)
     cardData, found := GetCardByID(cardNumber)
     if !found {
+        log.Printf("🔴 Error: Card not found - cardNumber: %d", cardNumber)
+        // Rollback reservation
+        delete(state.ReservedCards, cardNumber)
+        userCards := state.UserCards[userID]
+        for i, num := range userCards {
+            if num == cardNumber {
+                state.UserCards[userID] = append(userCards[:i], userCards[i+1:]...)
+                break
+            }
+        }
+        state.Game.TotalPool = float64(len(state.ReservedCards)) * StakeAmount
         return fmt.Errorf("card not found")
     }
+    log.Printf("🟢 Card found: %d", cardNumber)
 
     card := models.Card{
         ID:            uuid.New(),
@@ -270,7 +291,10 @@ func (e *Engine) ReserveCard(userID int64, cardNumber int) error {
         IsWinner:      false,
         Status:        "reserved",
     }
+    
+    log.Printf("🟡 Creating card record in DB...")
     if err := e.db.Create(&card).Error; err != nil {
+        log.Printf("🔴 Error: Failed to save card - %v", err)
         // Rollback reservation if card creation fails
         delete(state.ReservedCards, cardNumber)
         userCards := state.UserCards[userID]
@@ -283,13 +307,16 @@ func (e *Engine) ReserveCard(userID int64, cardNumber int) error {
         state.Game.TotalPool = float64(len(state.ReservedCards)) * StakeAmount
         return fmt.Errorf("failed saving card: %w", err)
     }
+    log.Printf("🟢 Card saved successfully")
 
-    // ✅ Calculate net pool and house cut
+    // Calculate net pool and house cut
     grossPool := state.Game.TotalPool
     netPool := CalculateNetPool(grossPool)
     houseCut := CalculateHouseCut(grossPool)
 
-    // ✅ Broadcast with net pool
+    log.Printf("🟢 Reservation complete! Pool: %.2f (net: %.2f)", grossPool, netPool)
+
+    // Broadcast with net pool
     e.broadcast(GameEvent{
         Type:       "card.reserved",
         GameID:     state.Game.ID.String(),
@@ -297,9 +324,9 @@ func (e *Engine) ReserveCard(userID int64, cardNumber int) error {
         UserID:     userID,
         Card:       &card,
         Players:    len(state.UserCards),
-        Pool:       netPool,        // ✅ Net pool (after house cut)
-        GrossPool:  grossPool,      // ✅ Gross pool (before house cut)
-        HouseCut:   houseCut,       // ✅ House cut amount
+        Pool:       netPool,
+        GrossPool:  grossPool,
+        HouseCut:   houseCut,
         Stake:      StakeAmount,
         Message:    fmt.Sprintf("Card #%d reserved! Prize Pool: $%.2f (House: $%.2f)", 
             cardNumber, netPool, houseCut),
