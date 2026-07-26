@@ -19,9 +19,9 @@ type VerifyClient struct {
 
 type VerifyRequest struct {
 	Bank              string  `json:"bank"`
-	TransactionNumber string  `json:"transactionNumber"` // ✅ Correct field name
+	TransactionNumber string  `json:"transactionNumber"`
 	Amount            float64 `json:"amount,omitempty"`
-	SettlementAccount string  `json:"settlementAccount,omitempty"` // ✅ For receiver verification
+	SettlementAccount string  `json:"settlementAccount,omitempty"`
 }
 
 type VerifyResponse struct {
@@ -34,14 +34,13 @@ type VerifyResponse struct {
 			Amount       float64 `json:"amount"`
 			SenderName   string  `json:"senderName"`
 			ReceiverName string  `json:"receiverName"`
-			Receiver     string  `json:"receiver"` // ✅ This is the receiver account
-			Matched      bool    `json:"matched"`   // ✅ Settlement account match
+			Receiver     string  `json:"receiver"`
+			Matched      bool    `json:"matched"`
 		} `json:"result"`
 	} `json:"data"`
 }
 
 func NewVerifyClient(apiKey string) *VerifyClient {
-	// ✅ Correct base URL
 	return &VerifyClient{
 		BaseURL: "https://verify.et",
 		APIKey:  apiKey,
@@ -52,14 +51,13 @@ func NewVerifyClient(apiKey string) *VerifyClient {
 }
 
 func (c *VerifyClient) VerifyTransaction(txnID string, amount float64, receiverPhone string) (*VerifyResponse, error) {
-	// ✅ Correct endpoint
 	url := fmt.Sprintf("%s/api/verify", c.BaseURL)
 
 	reqBody := VerifyRequest{
 		Bank:              "telebirr",
 		TransactionNumber: txnID,
 		Amount:            amount,
-		SettlementAccount: receiverPhone, // ✅ Verify it was sent to our account
+		SettlementAccount: receiverPhone,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -73,8 +71,12 @@ func (c *VerifyClient) VerifyTransaction(txnID string, amount float64, receiverP
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	
+	// ✅ Fix: Use Bearer token properly
 	if c.APIKey != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.APIKey))
+	} else {
+		return nil, fmt.Errorf("verify.et API key is not configured")
 	}
 
 	resp, err := c.Client.Do(req)
