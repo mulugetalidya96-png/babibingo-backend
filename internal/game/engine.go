@@ -377,6 +377,14 @@ func (e *Engine) collectAllStakes(state *GameState) error {
         userIDs[userID] = true
     }
     
+    // Check if there are any players
+    if len(userIDs) == 0 {
+        log.Println("⚠️ No players with reservations, cancelling game...")
+        return fmt.Errorf("no players to collect stakes from")
+    }
+    
+    log.Printf("🟡 Collecting stakes from %d players", len(userIDs))
+    
     // Use a database transaction for atomicity
     tx := e.db.Begin()
     defer func() {
@@ -392,11 +400,13 @@ func (e *Engine) collectAllStakes(state *GameState) error {
         cardCount := len(state.UserCards[userID])
         totalStake := float64(cardCount) * StakeAmount
         
-        // Get user
+        log.Printf("🟡 User %d has %d cards, total stake: %.2f", userID, cardCount, totalStake)
+        
+        // ✅ FIX: Query by telegram_id instead of id
         var user models.User
-        if err := tx.Where("id = ?", userID).First(&user).Error; err != nil {
+        if err := tx.Where("telegram_id = ?", userID).First(&user).Error; err != nil {
             tx.Rollback()
-            return fmt.Errorf("user %d not found: %w", userID, err)
+            return fmt.Errorf("user with telegram_id %d not found: %w", userID, err)
         }
         
         // Check balance
@@ -416,7 +426,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
         // Create transaction records for each card
         for _, cardNumber := range state.UserCards[userID] {
             transaction := models.Transaction{
-                UserID: userID,
+                UserID: user.ID,  // ✅ Use user.ID (primary key) for the transaction
                 Type:   "stake",
                 Amount: StakeAmount,
                 Status: "completed",
@@ -429,13 +439,13 @@ func (e *Engine) collectAllStakes(state *GameState) error {
             }
         }
         
-        // Update GamePlayer record
+        // Update GamePlayer record - Use user.ID (primary key)
         var gamePlayer models.GamePlayer
-        result := tx.Where("game_id = ? AND user_id = ?", state.Game.ID, userID).First(&gamePlayer)
+        result := tx.Where("game_id = ? AND user_id = ?", state.Game.ID, user.ID).First(&gamePlayer)
         if result.Error != nil {
             gamePlayer = models.GamePlayer{
                 GameID:     state.Game.ID,
-                UserID:     userID,
+                UserID:     user.ID,  // ✅ Use user.ID (primary key)
                 CardsCount: cardCount,
                 TotalStake: totalStake,
             }
@@ -453,8 +463,9 @@ func (e *Engine) collectAllStakes(state *GameState) error {
         }
         
         // Update card status from "reserved" to "active"
+        // ✅ Use user.ID (primary key) for the query
         if err := tx.Model(&models.Card{}).
-            Where("game_id = ? AND user_id = ?", state.Game.ID, userID).
+            Where("game_id = ? AND user_id = ?", state.Game.ID, user.ID).
             Update("status", "active").Error; err != nil {
             tx.Rollback()
             return fmt.Errorf("failed to update card status: %w", err)
@@ -475,6 +486,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
         return fmt.Errorf("failed to commit transaction: %w", err)
     }
     
+    log.Printf("✅ Collected total pool: %.2f", totalPool)
     return nil
 }
 func (e *Engine) CancelReservation(userID int64, cardNumber int) error {
