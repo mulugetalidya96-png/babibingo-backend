@@ -1,14 +1,18 @@
 package game
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"time"
 
 	"babibingo/internal/models"
+
+	"gorm.io/gorm"
 )
 
-// collectAllStakes collects stakes from all players with reservations
+// collectAllStakes - Updated with proper error handling
+
 func (e *Engine) collectAllStakes(state *GameState) error {
 	// Get all unique Telegram IDs with reservations
 	telegramIDs := make(map[int64]bool)
@@ -23,7 +27,6 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 
 	log.Printf("🟡 Collecting stakes from %d players", len(telegramIDs))
 
-	// Use a database transaction for atomicity
 	tx := e.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -45,6 +48,8 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			tx.Rollback()
 			return fmt.Errorf("user with telegram_id %d not found: %w", telegramID, err)
 		}
+
+		log.Printf("  ✅ Found user: ID=%d, TelegramID=%d", user.ID, user.TelegramID)
 
 		// Check balance
 		if user.Balance < totalStake {
@@ -77,22 +82,33 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			}
 		}
 
-		// Update GamePlayer record
+		// ✅ FIX: Check for game_player record and create if not exists
 		var gamePlayer models.GamePlayer
 		result := tx.Where("game_id = ? AND user_id = ?", state.Game.ID, user.ID).First(&gamePlayer)
+		
 		if result.Error != nil {
-			gamePlayer = models.GamePlayer{
-				GameID:     state.Game.ID,
-				UserID:     user.ID,
-				CardsCount: cardCount,
-				TotalStake: totalStake,
-				CreatedAt:  time.Now(),
-			}
-			if err := tx.Create(&gamePlayer).Error; err != nil {
+			// ✅ Check if it's a "record not found" error (which is expected)
+			if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+				// Create new game player record
+				gamePlayer = models.GamePlayer{
+					GameID:     state.Game.ID,
+					UserID:     user.ID,
+					CardsCount: cardCount,
+					TotalStake: totalStake,
+					CreatedAt:  time.Now(),
+				}
+				if err := tx.Create(&gamePlayer).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to create game player: %w", err)
+				}
+				log.Printf("  ✅ Created new game_player for user %d (primary ID: %d)", telegramID, user.ID)
+			} else {
+				// Some other error occurred
 				tx.Rollback()
-				return fmt.Errorf("failed to create game player: %w", err)
+				return fmt.Errorf("failed to query game player: %w", result.Error)
 			}
 		} else {
+			// Update existing game player record
 			gamePlayer.CardsCount = cardCount
 			gamePlayer.TotalStake = totalStake
 			gamePlayer.UpdatedAt = time.Now()
@@ -100,6 +116,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 				tx.Rollback()
 				return fmt.Errorf("failed to update game player: %w", err)
 			}
+			log.Printf("  ✅ Updated existing game_player for user %d (primary ID: %d)", telegramID, user.ID)
 		}
 
 		// Update card status from "reserved" to "active"
@@ -120,7 +137,6 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 		return fmt.Errorf("failed to update game pool: %w", err)
 	}
 
-	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
