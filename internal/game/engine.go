@@ -336,9 +336,7 @@ func (e *Engine) ReserveCard(userID int64, cardNumber int) error {
 }
 
 func (e *Engine) startCalling(state *GameState) {
-    state.mu.Lock()
-    defer state.mu.Unlock()
-    
+  
     // Deduct stakes from all players with reserved cards
     if err := e.collectAllStakes(state); err != nil {
         e.broadcast(GameEvent{
