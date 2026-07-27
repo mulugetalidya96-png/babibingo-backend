@@ -1,6 +1,7 @@
 package main
 
 import (
+	"babibingo/internal/agentbot" // ✅ Import agentbot
 	"babibingo/internal/api"
 	"babibingo/internal/bot"
 	"babibingo/internal/config"
@@ -23,8 +24,8 @@ func main() {
 	cfg := config.Load()
 
 	if err := game.LoadCardsFromJSON("data/cards.json"); err != nil {
-    log.Fatalf("Failed to load cards: %v", err)
-}
+		log.Fatalf("Failed to load cards: %v", err)
+	}
 
 	// Initialize database
 	db, err := repository.InitDB(cfg.DatabaseURL)
@@ -39,41 +40,46 @@ func main() {
 	engine := game.NewEngine(db, rdb)
 	go engine.Run()
 
-	// Initialize Telegram bot
-	// Initialize Telegram bot
-if cfg.BotToken != "" {
-
-	telegramBot, err := bot.New(
-		cfg.BotToken,
-		cfg.WebAppURL,
-		db,
-		rdb,
-		cfg,
-	)
-
-	if err != nil {
-		log.Fatalf(
-			"Failed to initialize telegram bot: %v",
-			err,
-		)
+	// ✅ Initialize Agent Bot
+	if cfg.AgentBotToken != "" {
+		agentBot, err := agentbot.New(cfg.AgentBotToken, db)
+		if err != nil {
+			log.Printf("Failed to initialize agent bot: %v", err)
+		} else {
+			go func() {
+				ctx := context.Background()
+				if err := agentBot.Start(ctx); err != nil {
+					log.Printf("Agent bot stopped: %v", err)
+				}
+			}()
+			log.Println("✅ Agent Bot started successfully")
+		}
+	} else {
+		log.Println("⚠️ AGENT_BOT_TOKEN not set, agent bot disabled")
 	}
 
-
-	go func() {
-
-		if err := telegramBot.Start(
-			context.Background(),
-		); err != nil {
-
-			log.Printf(
-				"Telegram bot stopped: %v",
-				err,
-			)
+	// Initialize Telegram bot (Main Bot)
+	if cfg.BotToken != "" {
+		telegramBot, err := bot.New(
+			cfg.BotToken,
+			cfg.WebAppURL,
+			db,
+			rdb,
+			cfg,
+		)
+		if err != nil {
+			log.Fatalf("Failed to initialize telegram bot: %v", err)
 		}
 
-	}()
-
-}
+		go func() {
+			if err := telegramBot.Start(context.Background()); err != nil {
+				log.Printf("Telegram bot stopped: %v", err)
+			}
+		}()
+		log.Println("✅ Main Bot started successfully")
+	} else {
+		log.Println("⚠️ TELEGRAM_BOT_TOKEN not set, main bot disabled")
+	}
 
 	// Setup HTTP server
 	router := gin.Default()
@@ -94,7 +100,7 @@ if cfg.BotToken != "" {
 		port = "8080"
 	}
 
-	log.Printf("Server starting on port %s", port)
+	log.Printf("🚀 Server starting on port %s", port)
 	if err := router.Run(":" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}

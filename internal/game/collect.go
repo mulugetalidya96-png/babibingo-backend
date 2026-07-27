@@ -11,8 +11,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// collectAllStakes - Updated with proper error handling
-
 // collectAllStakes collects stakes from all players with reservations
 func (e *Engine) collectAllStakes(state *GameState) error {
 	// Get all unique Telegram IDs with reservations
@@ -68,22 +66,22 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 		}
 		log.Printf("  ✅ Deducted balance for user %d, new balance: %.2f", telegramID, user.Balance)
 
-		// Create transaction records
+		// ✅ Create transaction records with unique reference
 		for _, cardNumber := range state.UserCards[telegramID] {
-			  reference := fmt.Sprintf("stake_%s_%d_%d", 
-                state.Game.ID.String()[:8], 
-                user.ID, 
-                time.Now().UnixNano(),
-            )
+			reference := fmt.Sprintf("stake_%s_%d_%d", 
+				state.Game.ID.String()[:8], 
+				user.ID, 
+				time.Now().UnixNano(),
+			)
 			transaction := models.Transaction{
-				UserID: user.ID,
-				Type:   "stake",
-				Amount: StakeAmount,
-				Status: "completed",
-				Method: "system",
-				 Reference:   reference,
+				UserID:      user.ID,
+				Type:        "stake",
+				Amount:      StakeAmount,
+				Status:      "completed",
+				Method:      "system",
+				Reference:   reference,
 				Description: fmt.Sprintf("Card #%d for game %s", cardNumber, state.Game.ID.String()),
-				CreatedAt: time.Now(),
+				CreatedAt:   time.Now(),
 			}
 			if err := tx.Create(&transaction).Error; err != nil {
 				tx.Rollback()
@@ -92,14 +90,55 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			log.Printf("  ✅ Created transaction for card #%d", cardNumber)
 		}
 
-		// ✅ Handle game_player record - create if not exists
+		// ✅ NEW: Agent Commission Logic
+		// Check if this user was referred by an agent
+		if user.ReferredBy != nil {
+			var agent models.User
+			if err := tx.Where("id = ?", *user.ReferredBy).First(&agent).Error; err == nil {
+				// ✅ Only pay commission if the referrer is an agent
+				if agent.IsAgent {
+					// Commission: 1 ETB per card
+					commission := float64(cardCount) * 1.0
+					agent.AgentBalance += commission
+					
+					if err := tx.Save(&agent).Error; err != nil {
+						log.Printf("⚠️ Failed to update agent balance: %v", err)
+					} else {
+						log.Printf("💰 Agent %d (Telegram: %d) earned %.2f ETB commission from user %d", 
+							agent.ID, agent.TelegramID, commission, user.ID)
+						
+						// Create commission transaction
+						commissionReference := fmt.Sprintf("comm_%d_%d_%d", 
+							agent.ID, 
+							user.ID, 
+							time.Now().UnixNano(),
+						)
+						commissionTx := models.Transaction{
+							UserID:      agent.ID,
+							Type:        "agent_commission",
+							Amount:      commission,
+							Status:      "completed",
+							Method:      "system",
+							Reference:   commissionReference,
+							Description: fmt.Sprintf("Commission from user %d playing %d cards", user.ID, cardCount),
+							CreatedAt:   time.Now(),
+						}
+						if err := tx.Create(&commissionTx).Error; err != nil {
+							log.Printf("⚠️ Failed to create commission transaction: %v", err)
+						}
+					}
+				}
+			} else {
+				log.Printf("⚠️ Referrer %d not found for user %d", *user.ReferredBy, user.ID)
+			}
+		}
+
+		// Handle game_player record - create if not exists
 		var gamePlayer models.GamePlayer
 		result := tx.Where("game_id = ? AND user_id = ?", state.Game.ID, user.ID).First(&gamePlayer)
 		
 		if result.Error != nil {
-			// ✅ Check if it's a "record not found" error (which is expected)
 			if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-				// Create new game player record
 				gamePlayer = models.GamePlayer{
 					GameID:     state.Game.ID,
 					UserID:     user.ID,
@@ -113,12 +152,10 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 				}
 				log.Printf("  ✅ Created new game_player for user %d (primary ID: %d)", telegramID, user.ID)
 			} else {
-				// Some other error occurred
 				tx.Rollback()
 				return fmt.Errorf("failed to query game player: %w", result.Error)
 			}
 		} else {
-			// Update existing game player record
 			gamePlayer.CardsCount = cardCount
 			gamePlayer.TotalStake = totalStake
 			gamePlayer.UpdatedAt = time.Now()

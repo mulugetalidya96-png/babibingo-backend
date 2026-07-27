@@ -4,6 +4,7 @@ import (
 	"babibingo/internal/config"
 	"context"
 	"log"
+	"sync"
 
 	"github.com/mymmrac/telego"
 	"github.com/redis/go-redis/v9"
@@ -11,22 +12,22 @@ import (
 )
 
 type Bot struct {
-	api *telego.Bot
-	me  *telego.User
-
-	db  *gorm.DB
-	rdb *redis.Client
-	cfg *config.Config  // ✅ Keep this
-	webAppURL string
+	api                *telego.Bot
+	me                 *telego.User
+	db                 *gorm.DB
+	rdb                *redis.Client
+	cfg                *config.Config
+	webAppURL          string
+	tempReferralCache  sync.Map // ✅ Add this field
 }
 
-// ✅ Updated: Accept config as parameter
+// New creates a new Bot instance
 func New(
 	token string,
 	webAppURL string,
 	db *gorm.DB,
 	redisClient *redis.Client,
-	cfg *config.Config, // ✅ Add config parameter
+	cfg *config.Config,
 ) (*Bot, error) {
 
 	api, err := telego.NewBot(token)
@@ -42,12 +43,13 @@ func New(
 	}
 
 	b := &Bot{
-		api:        api,
-		me:         me,
-		db:         db,
-		rdb:        redisClient,
-		cfg:        cfg,        // ✅ Set config
-		webAppURL:  webAppURL,
+		api:               api,
+		me:                me,
+		db:                db,
+		rdb:               redisClient,
+		cfg:               cfg,
+		webAppURL:         webAppURL,
+		tempReferralCache: sync.Map{}, // ✅ Initialize the sync.Map
 	}
 
 	if err := b.setupCommands(ctx); err != nil {

@@ -9,104 +9,89 @@ import (
 
 	"github.com/mymmrac/telego"
 )
+
+// internal/bot/command.go - handleCommand
+
 func (b *Bot) handleCommand(
-	ctx context.Context,
-	chatID int64,
-	user *telego.User,
-	text string,
+    ctx context.Context,
+    chatID int64,
+    user *telego.User,
+    text string,
 ) {
+    // Parse command and arguments
+    parts := strings.Split(strings.TrimPrefix(text, "/"), " ")
+    command := parts[0]
+    
+    // ✅ Extract referral code if present (e.g., /start ABC123)
+    referralCode := ""
+    if len(parts) > 1 {
+        referralCode = parts[1]
+    }
 
-	command := strings.Split(
-		strings.TrimPrefix(text, "/"),
-		" ",
-	)[0]
+    switch command {
+    case "start":
+        b.handleStart(ctx, chatID, user, referralCode) // ✅ Pass referral code
 
-	switch command {
+    case "play":
+        b.handlePlay(ctx, chatID)
 
-	case "start":
-		b.handleStart(ctx, chatID, user)
+    case "balance":
+        b.handleBalance(ctx, chatID, user)
 
-	case "play":
-		b.handlePlay(ctx, chatID)
+    case "deposit":
+        b.handleDeposit(ctx, chatID)
 
-	case "balance":
-		b.handleBalance(ctx, chatID, user)
+    case "withdraw":
+        b.handleWithdraw(ctx, chatID)
 
-	case "deposit":
-		b.handleDeposit(ctx, chatID)
+    case "agent":
+        b.handleAgent(ctx, chatID, user)
 
-	case "withdraw":
-		b.handleWithdraw(ctx, chatID)
+    case "invite":
+        b.handleInvite(ctx, chatID, user)
 
-	case "agent":
-		b.handleAgent(ctx, chatID, user)
+    case "support":
+        b.handleSupport(ctx, chatID)
 
-	case "invite":
-		b.handleInvite(ctx, chatID, user)
-
-	case "support":
-		b.handleSupport(ctx, chatID)
-
-	default:
-		b.sendText(
-			ctx,
-			chatID,
-			"Unknown command. Use the menu below.",
-		)
-
-		b.sendMainMenu(
-			ctx,
-			chatID,
-		)
-	}
+    default:
+        b.sendText(ctx, chatID, "Unknown command. Use the menu below.")
+        b.sendMainMenu(ctx, chatID)
+    }
 }
+// internal/bot/command.go - handleStart
+
 func (b *Bot) handleStart(
-	ctx context.Context,
-	chatID int64,
-	user *telego.User,
+    ctx context.Context,
+    chatID int64,
+    user *telego.User,
+    referralCode string, // ✅ Add referral code parameter
 ) {
+    var existing models.User
+    err := b.db.Where("telegram_id = ?", user.ID).First(&existing).Error
 
-	var existing models.User
+    if err == nil {
+        b.sendMainMenu(ctx, chatID)
+        return
+    }
 
-	err := b.db.
-		Where(
-			"telegram_id = ?",
-			user.ID,
-		).
-		First(&existing).
-		Error
+    // ✅ Store referral code temporarily (will be used after phone registration)
+    // We'll store in context or a map
+    if referralCode != "" {
+        b.tempReferralCache.Store(chatID, referralCode)
+    }
 
+    // Ask for phone number
+    msg := telego.SendMessageParams{
+        ChatID: telego.ChatID{
+            ID: chatID,
+        },
+        Text: "📋 *Registration Process*\n\n" +
+            "Please share your phone number to register automatically.",
+        ParseMode: "Markdown",
+        ReplyMarkup: b.contactKeyboard(),
+    }
 
-	if err == nil {
-
-		b.sendMainMenu(
-			ctx,
-			chatID,
-		)
-
-		return
-	}
-
-
-	msg := telego.SendMessageParams{
-		ChatID: telego.ChatID{
-			ID: chatID,
-		},
-
-		Text:
-		"📋 *Registration Process*\n\n" +
-			"Please share your phone number to register automatically.",
-
-		ParseMode: "Markdown",
-
-		ReplyMarkup: b.contactKeyboard(),
-	}
-
-
-	b.sendMessage(
-		ctx,
-		&msg,
-	)
+    b.sendMessage(ctx, &msg)
 }
 func (b *Bot) handlePlay(
 	ctx context.Context,
@@ -272,110 +257,88 @@ func (b *Bot) handleWithdraw(
 			"Minimum withdrawal: 50 ETB",
 	)
 }
+// handleAgent handles agent-related actions
 func (b *Bot) handleAgent(
 	ctx context.Context,
 	chatID int64,
 	user *telego.User,
 ) {
-
 	var u models.User
 
-
 	err := b.db.
-		Where(
-			"telegram_id = ?",
-			user.ID,
-		).
+		Where("telegram_id = ?", user.ID).
 		First(&u).
 		Error
 
-
 	if err != nil {
-
 		b.sendText(
 			ctx,
 			chatID,
-			"❌ Please register first",
+			"❌ Please register first with /start",
 		)
-
 		return
 	}
 
-
-	if !u.IsAgent {
-
+	// If user is already an agent, show dashboard
+	if u.IsAgent {
 		b.sendMarkdown(
 			ctx,
 			chatID,
-
-			"🤝 *Become an Agent*\n\n"+
-				"• 5% commission on deposits\n"+
-				"• 3% commission on referrals\n\n"+
-				"Contact support.",
+			fmt.Sprintf(
+				"🤝 *Agent Dashboard*\n\n"+
+					"💰 Agent Balance: %.2f ETB\n"+
+					"🔑 Referral Code: `%s`\n\n"+
+					"📤 Share your referral link to earn commissions!\n"+
+					"1 ETB per card played by your invited users.",
+				u.AgentBalance,
+				u.ReferralCode,
+			),
 		)
-
 		return
 	}
 
-
+	// ✅ Updated Agent Registration Message for BabiBingo
 	b.sendMarkdown(
 		ctx,
 		chatID,
-
-		fmt.Sprintf(
-			"🤝 *Agent Dashboard*\n\n"+
-				"Balance: %.2f ETB\n"+
-				"Code: %s",
-
-			u.AgentBalance,
-			u.ReferralCode,
-		),
+		"💼 *Become a BabiBingo Agent*\n\n"+
+			"Earn commissions every time your invited players play!\n\n"+
+			"💰 *Commission:* 1 ETB per card played by your invited users\n\n"+
+			"የባቢ ቢንጎ ኤጀንት በመሆን እና invite ያደረጉት ሰው 1 ካርቴላ በያዘ ቁጥር 1 ብር ያግኙ \n\n"+
+			"ለመመዝገብ :- ከዚህ ስር የሚገኘውን ቁልፍ በመንካት request አድርገው...invite ማድረጊያ link ይላክሎታል \n\n"+
+			"እርሱን link በማጋራት invite ያድረጉ።\n\n"+
+			"👉 *Register here as an agent:*\n"+
+			"@BabiBingoAgent_Bot", // ✅ Updated to BabiBingo Agent Bot
 	)
 }
+// internal/bot/command.go - handleInvite
+
+// internal/bot/command.go - handleInvite
+
 func (b *Bot) handleInvite(
 	ctx context.Context,
 	chatID int64,
 	user *telego.User,
 ) {
-
 	var u models.User
-
-
-	if err := b.db.
-		Where(
-			"telegram_id = ?",
-			user.ID,
-		).
-		First(&u).
-		Error; err != nil {
-
-		b.sendText(
-			ctx,
-			chatID,
-			"❌ Please register first",
-		)
-
+	if err := b.db.Where("telegram_id = ?", user.ID).First(&u).Error; err != nil {
+		b.sendText(ctx, chatID, "❌ Please register first with /start")
 		return
 	}
 
-
+	// ✅ Create invite link with user's Telegram ID as referral
 	link := fmt.Sprintf(
-		"https://t.me/%s?start=%s",
-		b.me.Username,
-		u.ReferralCode,
+		"https://t.me/babibingo_bot?start=ref_%d",
+		user.ID,
 	)
-
 
 	b.sendMarkdown(
 		ctx,
 		chatID,
-
 		fmt.Sprintf(
-			"📨 *Invite Friends*\n\n"+
-				"Code: `%s`\n\n"+
-				"%s\n\n"+
-				"Earn 10 ETB for referrals.",
-			u.ReferralCode,
+			"🔗 *Your Invitation Link*\n\n"+
+				"Share this link with your friends!\n\n"+
+				"Link: %s",
 			link,
 		),
 	)

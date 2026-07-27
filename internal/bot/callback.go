@@ -63,21 +63,33 @@ func (b *Bot) handleDepositBankSelection(
 			ctx,
 			chatID,
 			"📱 *Telebirr Deposit*\n\n"+
-				"Send money to:\n"+
-				"`0940072277` — BabiBingo\n\n"+
-				"Copy SMS and submit.\n\n",
+				"Account: `0940072277` — Yonatan\n\n"+
+				"━━━━━━━━━━━━━━━\n"+
+				"📱 *Telebirr Deposit Steps*\n\n"+
+				"1️⃣ ከላይ ባለው የ Telebirr አካውንት ገንዘቡን ያስገቡ።\n"+
+				"2️⃣ ክፍያ ካደረጉ በኋላ የ Telebirr የጹሁፍ መልክት (SMS) ይደርሳችኋል።\n"+
+				"3️⃣ የደረሳችሁን SMS ሙሉ በሙሉ ኮፒ (copy) በማረግ በዚህ ቻት ፔስት (paste) አድርጉ።\n\n"+
+				"💬 የክፍያ ችግር ካለ፣ @rasbingosupport ያናግሩ።\n\n"+
+				"━━━━━━━━━━━━━━━\n"+
+				"📤 After sending payment, please paste the SMS confirmation below 👇",
 		)
+
 	case "cbebirr":
 		b.sendMarkdown(
 			ctx,
 			chatID,
-			"🏦 *CBE Birr Deposit*\n\n"+
-				"Send money to:\n"+
-				"Account: `1000123456789`\n"+
-				"Name: BabiBingo\n"+
-				"Bank: CBE\n\n"+
-				"Copy transaction reference and submit.\n\n",
+			"🏦 *CBEBirr Deposit*\n\n"+
+				"Account: `0940072277` — Yonatan\n\n"+
+				"━━━━━━━━━━━━━━━\n"+
+				"📱 *CBEBirr Deposit Steps*\n\n"+
+				"1️⃣ ከላይ ባለው የ CBEBirr አካውንት ገንዘቡን ያስገቡ።\n"+
+				"2️⃣ ክፍያ ካደረጉ በኋላ የ CBEBirr የጹሁፍ መልክት (SMS) ይደርሳችኋል።\n"+
+				"3️⃣ የደረሳችሁን SMS ሙሉ በሙሉ ኮፒ (copy) በማረግ በዚህ ቻት ፔስት (paste) አድርጉ።\n\n"+
+				"💬 የክፍያ ችግር ካለ፣ @rasbingosupport ያናግሩ።\n\n"+
+				"━━━━━━━━━━━━━━━\n"+
+				"📤 After sending payment, please paste the SMS confirmation below 👇",
 		)
+
 	default:
 		b.sendText(ctx, chatID, "❌ Invalid selection. Please try again.")
 		b.handleDeposit(ctx, chatID)
