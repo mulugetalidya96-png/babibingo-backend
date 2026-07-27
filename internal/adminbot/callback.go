@@ -102,27 +102,40 @@ func (b *Bot) handleMenuNavigation(ctx context.Context, chatID int64, data strin
         b.sendText(ctx, chatID, "❌ Unknown menu option.")
     }
 }
-// Placeholder functions for missing handlers
+
+
+
+// callback.go - Add these functions
+
 func (b *Bot) approveTransaction(ctx context.Context, chatID int64, txType string, txID string) {
-    b.sendText(ctx, chatID, "⚠️ Approve transaction feature coming soon")
+    switch txType {
+    case "deposit":
+        b.approveDeposit(ctx, chatID, txID)
+    case "withdraw":
+        b.approveWithdrawal(ctx, chatID, txID)
+    default:
+        b.sendText(ctx, chatID, "❌ Unknown transaction type.")
+    }
 }
 
 func (b *Bot) rejectTransaction(ctx context.Context, chatID int64, txType string, txID string) {
-    b.sendText(ctx, chatID, "⚠️ Reject transaction feature coming soon")
+    switch txType {
+    case "deposit":
+        b.rejectDeposit(ctx, chatID, txID)
+    case "withdraw":
+        b.rejectWithdrawal(ctx, chatID, txID)
+    default:
+        b.sendText(ctx, chatID, "❌ Unknown transaction type.")
+    }
+}
+// callback.go - Add these functions
+
+// callback.go - Add/Update these functions
+
+func (b *Bot) approveWithdrawal(ctx context.Context, chatID int64, txID string) {
+    b.approveWithdraw(ctx, chatID, txID)
 }
 
-func (b *Bot) handleDeposits(ctx context.Context, chatID int64, args []string) {
-    b.sendText(ctx, chatID, "⚠️ Deposit management coming soon")
-}
-
-func (b *Bot) handleWithdrawals(ctx context.Context, chatID int64, args []string) {
-    b.sendText(ctx, chatID, "⚠️ Withdrawal management coming soon")
-}
-
-func (b *Bot) handleGames(ctx context.Context, chatID int64, args []string) {
-    b.sendText(ctx, chatID, "⚠️ Game monitoring coming soon")
-}
-
-func (b *Bot) handleUsers(ctx context.Context, chatID int64, args []string) {
-    b.sendText(ctx, chatID, "⚠️ User management coming soon")
+func (b *Bot) rejectWithdrawal(ctx context.Context, chatID int64, txID string) {
+    b.rejectWithdraw(ctx, chatID, txID)
 }
