@@ -258,6 +258,8 @@ func (b *Bot) handleWithdraw(
 	)
 }
 // handleAgent handles agent-related actions
+// internal/bot/command.go - handleAgent
+
 func (b *Bot) handleAgent(
 	ctx context.Context,
 	chatID int64,
@@ -281,35 +283,77 @@ func (b *Bot) handleAgent(
 
 	// If user is already an agent, show dashboard
 	if u.IsAgent {
+		var referralCount int64
+		b.db.Model(&models.User{}).Where("referred_by = ?", u.ID).Count(&referralCount)
+
+		var totalCommission float64
+		b.db.Model(&models.Transaction{}).
+			Where("user_id = ? AND type = ?", u.ID, "agent_commission").
+			Select("COALESCE(SUM(amount), 0)").
+			Scan(&totalCommission)
+
 		b.sendMarkdown(
 			ctx,
 			chatID,
 			fmt.Sprintf(
 				"🤝 *Agent Dashboard*\n\n"+
 					"💰 Agent Balance: %.2f ETB\n"+
+					"📊 Total Earned: %.2f ETB\n"+
+					"👥 Referrals: %d\n"+
 					"🔑 Referral Code: `%s`\n\n"+
 					"📤 Share your referral link to earn commissions!\n"+
-					"1 ETB per card played by your invited users.",
+					"1 ETB per card played by your invited users.\n\n"+
+					"🔗 https://t.me/babibingo_bot?start=ref_%d",
 				u.AgentBalance,
+				totalCommission,
+				referralCount,
 				u.ReferralCode,
+				u.TelegramID,
 			),
 		)
 		return
 	}
 
-	// ✅ Updated Agent Registration Message for BabiBingo
+	// ✅ Fixed: Clean markdown without special characters issues
 	b.sendMarkdown(
 		ctx,
 		chatID,
 		"💼 *Become a BabiBingo Agent*\n\n"+
 			"Earn commissions every time your invited players play!\n\n"+
 			"💰 *Commission:* 1 ETB per card played by your invited users\n\n"+
-			"የባቢ ቢንጎ ኤጀንት በመሆን እና invite ያደረጉት ሰው 1 ካርቴላ በያዘ ቁጥር 1 ብር ያግኙ \n\n"+
-			"ለመመዝገብ :- ከዚህ ስር የሚገኘውን ቁልፍ በመንካት request አድርገው...invite ማድረጊያ link ይላክሎታል \n\n"+
-			"እርሱን link በማጋራት invite ያድረጉ።\n\n"+
-			"👉 *Register here as an agent:*\n"+
-			"@BabiBingoAgent_Bot", // ✅ Updated to BabiBingo Agent Bot
+			"📝 *To become an agent:*\n"+
+			"1️⃣ Click the button below to open the Agent Bot\n"+
+			"2️⃣ Submit your request\n"+
+			"3️⃣ Wait for admin approval\n"+
+			"4️⃣ Once approved, you'll get access to your agent dashboard\n\n"+
+			"🤖 *Apply here:* @BabiBingoAgentBot",
 	)
+
+	// Send with inline button
+	msg := telego.SendMessageParams{
+		ChatID: telego.ChatID{
+			ID: chatID,
+		},
+		Text: "👇 Click below to apply as an agent:",
+		ReplyMarkup: &telego.InlineKeyboardMarkup{
+			InlineKeyboard: [][]telego.InlineKeyboardButton{
+				{
+					{
+						Text: "🤝 Apply as Agent",
+						URL:  "https://t.me/BabiBingoAgentBot",
+					},
+				},
+				{
+					{
+						Text:         "🔙 Back",
+						CallbackData: "back_to_menu",
+					},
+				},
+			},
+		},
+	}
+
+	b.sendMessage(ctx, &msg)
 }
 // internal/bot/command.go - handleInvite
 
