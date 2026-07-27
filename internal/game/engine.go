@@ -142,3 +142,61 @@ func (e *Engine) GetGameState(userID int64) (*GameStateResponse, error) {
 		ReservedCards: reservedCards,
 	}, nil
 }
+// GetGameStats returns game statistics for admin dashboard
+func (e *Engine) GetGameStats() map[string]interface{} {
+    e.mu.RLock()
+    defer e.mu.RUnlock()
+
+    stats := make(map[string]interface{})
+    
+    if e.currentGame == nil {
+        stats["has_active_game"] = false
+        return stats
+    }
+
+    state := e.currentGame
+    stats["has_active_game"] = true
+    stats["game_id"] = state.Game.ID.String()
+    stats["status"] = state.Game.Status
+    stats["total_pool"] = state.Game.TotalPool
+    stats["players"] = len(state.UserCards)
+    stats["reserved_cards"] = len(state.ReservedCards)
+    stats["called_numbers"] = len(state.CalledNums)
+    stats["timer"] = int(state.Timer.Seconds())
+    stats["call_index"] = state.CallIndex
+
+    // Get bot count in game
+    botCount := 0
+    for _, userID := range state.ReservedCards {
+        var user models.User
+        if err := e.db.Where("telegram_id = ?", userID).First(&user).Error; err == nil {
+            if user.IsBot {
+                botCount++
+            }
+        }
+    }
+    stats["bot_count"] = botCount
+
+    return stats
+}
+
+// GetActiveGamesCount returns number of active games
+func (e *Engine) GetActiveGamesCount() int64 {
+    var count int64
+    e.db.Model(&models.Game{}).Where("status IN (?)", []string{GameStatusWaiting, GameStatusCalling}).Count(&count)
+    return count
+}
+
+// GetTotalGamesCount returns total games played
+func (e *Engine) GetTotalGamesCount() int64 {
+    var count int64
+    e.db.Model(&models.Game{}).Count(&count)
+    return count
+}
+
+// GetTotalPoolAllGames returns total pool from all finished games
+func (e *Engine) GetTotalPoolAllGames() float64 {
+    var total float64
+    e.db.Model(&models.Game{}).Where("status = ?", GameStatusFinished).Select("COALESCE(SUM(total_pool), 0)").Scan(&total)
+    return total
+}

@@ -1,7 +1,7 @@
 package adminbot
 
 import (
-    "time"
+	"time"
 )
 
 // AgentRequest - from agent bot
@@ -34,6 +34,7 @@ type AdminActionLog struct {
 // AdminConfig - bot settings
 type AdminConfig struct {
     ID               uint      `gorm:"primaryKey"`
+	AdminIDs         string    `gorm:"type:text"`
     AutoApprove      bool      `gorm:"default:false"`
     NotifyOnApply    bool      `gorm:"default:true"`
     NotifyOnDeposit  bool      `gorm:"default:true"`

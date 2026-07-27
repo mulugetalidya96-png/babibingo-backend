@@ -1,9 +1,12 @@
 package adminbot
 
 import (
+	"babibingo/internal/models"
 	"context"
+	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/mymmrac/telego"
 )
@@ -123,4 +126,89 @@ func (b *Bot) handleHelp(ctx context.Context, chatID int64) {
             "/settings autoapprove - Toggle\n"+
             "/settings notifications - Toggle",
     )
+}
+// command.go - Add this function
+
+// ✅ showDashboard - Show admin dashboard with summary
+func (b *Bot) showDashboard(ctx context.Context, chatID int64) {
+	// Get pending counts
+	var pendingAgents int64
+	b.db.Model(&AgentRequest{}).Where("status = ?", "pending").Count(&pendingAgents)
+
+	var pendingDeposits int64
+	b.db.Model(&models.Transaction{}).Where("type = ? AND status = ?", "deposit", "pending").Count(&pendingDeposits)
+
+	var pendingWithdrawals int64
+	b.db.Model(&models.Transaction{}).Where("type = ? AND status = ?", "withdraw", "pending").Count(&pendingWithdrawals)
+
+	var activeGames int64
+	b.db.Model(&models.Game{}).Where("status IN (?)", []string{"waiting", "calling"}).Count(&activeGames)
+
+	var totalUsers int64
+	b.db.Model(&models.User{}).Count(&totalUsers)
+
+	var totalAgents int64
+	b.db.Model(&models.User{}).Where("is_agent = ?", true).Count(&totalAgents)
+
+	// Get today's stats
+	today := time.Now().Truncate(24 * time.Hour)
+	var todayDeposits float64
+	b.db.Model(&models.Transaction{}).
+		Where("type = ? AND status = ? AND created_at >= ?", "deposit", "completed", today).
+		Select("COALESCE(SUM(amount), 0)").Scan(&todayDeposits)
+
+	var todayWithdrawals float64
+	b.db.Model(&models.Transaction{}).
+		Where("type = ? AND status = ? AND created_at >= ?", "withdraw", "completed", today).
+		Select("COALESCE(SUM(amount), 0)").Scan(&todayWithdrawals)
+
+	msg := telego.SendMessageParams{
+		ChatID: telego.ChatID{ID: chatID},
+		Text: fmt.Sprintf(
+			"📊 *Admin Dashboard*\n\n"+
+				"🟡 *Pending Actions:*\n"+
+				"• 👥 Agents: %d\n"+
+				"• 💳 Deposits: %d\n"+
+				"• 🏧 Withdrawals: %d\n\n"+
+				"🎱 *Active Games:* %d\n\n"+
+				"👥 *Users:* %d (🤝 Agents: %d)\n\n"+
+				"💰 *Today's Activity:*\n"+
+				"• Deposits: %.2f ETB\n"+
+				"• Withdrawals: %.2f ETB\n\n"+
+				"🤖 Uptime: %s\n\n"+
+				"📋 Use /help for commands",
+			pendingAgents,
+			pendingDeposits,
+			pendingWithdrawals,
+			activeGames,
+			totalUsers,
+			totalAgents,
+			todayDeposits,
+			todayWithdrawals,
+			b.getUptime(),
+		),
+		ParseMode: "Markdown",
+		ReplyMarkup: &telego.InlineKeyboardMarkup{
+			InlineKeyboard: [][]telego.InlineKeyboardButton{
+				{
+					{Text: "👥 Agents", CallbackData: "menu_agents"},
+					{Text: "💳 Deposits", CallbackData: "menu_deposits"},
+				},
+				{
+					{Text: "🏧 Withdrawals", CallbackData: "menu_withdrawals"},
+					{Text: "🎱 Games", CallbackData: "menu_games"},
+				},
+				{
+					{Text: "🤖 Bots", CallbackData: "menu_bots"},
+					{Text: "👤 Users", CallbackData: "menu_users"},
+				},
+				{
+					{Text: "📊 Stats", CallbackData: "menu_stats"},
+					{Text: "⚙️ Settings", CallbackData: "menu_settings"},
+				},
+			},
+		},
+	}
+
+	b.sendMessage(ctx, &msg)
 }

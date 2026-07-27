@@ -83,7 +83,7 @@ func main() {
 	}
 	// ✅ Initialize Admin Bot
     if cfg.AdminBotToken != "" && len(cfg.GetAdminIDs()) > 0 {
-        adminBot, err := adminbot.New(cfg.AdminBotToken, db, cfg)
+        adminBot, err := adminbot.New(cfg.AdminBotToken, db, cfg, engine)
         if err != nil {
             log.Printf("Failed to initialize admin bot: %v", err)
         } else {
