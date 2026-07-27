@@ -326,7 +326,7 @@ func (b *Bot) handleAgent(
 			"2️⃣ Submit your request\n"+
 			"3️⃣ Wait for admin approval\n"+
 			"4️⃣ Once approved, you'll get access to your agent dashboard\n\n"+
-			"🤖 *Apply here:* @BabiBingoAgentBot",
+			"🤖 *Apply here:* @babibingoagent_bot",
 	)
 
 	// Send with inline button
@@ -340,7 +340,7 @@ func (b *Bot) handleAgent(
 				{
 					{
 						Text: "🤝 Apply as Agent",
-						URL:  "https://t.me/BabiBingoAgentBot",
+						URL:  "https://t.me/babibingoagent_bot",
 					},
 				},
 				{
@@ -359,6 +359,8 @@ func (b *Bot) handleAgent(
 
 // internal/bot/command.go - handleInvite
 
+// internal/bot/command.go - handleInvite
+
 func (b *Bot) handleInvite(
 	ctx context.Context,
 	chatID int64,
@@ -370,7 +372,7 @@ func (b *Bot) handleInvite(
 		return
 	}
 
-	// ✅ Create invite link with user's Telegram ID as referral
+	// ✅ Bot username: babibingo_bot (with underscore)
 	link := fmt.Sprintf(
 		"https://t.me/babibingo_bot?start=ref_%d",
 		user.ID,
