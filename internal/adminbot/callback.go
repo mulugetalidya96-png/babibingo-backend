@@ -180,24 +180,11 @@ func (b *Bot) handleGamesCallback(ctx context.Context, chatID int64, data string
 // ✅ handleBotsCallback - Bots menu callbacks
 func (b *Bot) handleBotsCallback(ctx context.Context, chatID int64, data string) {
 	switch data {
-	case "bots_start":
-		b.startBots(ctx, chatID)
-	case "bots_stop":
-		b.stopBots(ctx, chatID)
-	case "bots_stats":
-		b.showDetailedBotStats(ctx, chatID)
-	case "bots_reset":
-		b.resetBots(ctx, chatID)
+
 	case "bots_reset_confirm":
 		b.handleBotsResetConfirm(ctx, chatID)
 	case "bots_reset_cancel":
 		b.showBotStatus(ctx, chatID)
-	case "bots_settings":
-		b.showBotSettings(ctx, chatID)
-	case "bots_add_5":
-		b.addBots(ctx, chatID, 5)
-	case "bots_remove_5":
-		b.removeBots(ctx, chatID, 5)
 	case "bots_back":
 		b.showBotStatus(ctx, chatID)
 	default:
