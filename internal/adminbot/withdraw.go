@@ -107,10 +107,11 @@ func (b *Bot) showAllWithdrawals(ctx context.Context, chatID int64) {
             ctx,
             chatID,
             fmt.Sprintf(
-                "%s %.2f ETB | @%s | %s | Ref: %s",
+                "%s %.2f ETB | @%s | 📱%s | %s | Ref: %s",
                 statusEmoji,
                 withdrawal.Amount,
                 user.Username,
+                user.PhoneNumber,
                 withdrawal.CreatedAt.Format("Jan 2, 15:04"),
                 withdrawal.Reference,
             ),
@@ -188,10 +189,11 @@ func (b *Bot) approveWithdraw(ctx context.Context, chatID int64, transactionID s
                 "💰 Amount: %.2f ETB\n"+
                 "🆔 Reference: `%s`\n"+
                 "💳 New Balance: %.2f ETB\n\n"+
-                "🏦 Funds will be sent to your account shortly.",
+                "🏦 Funds will be sent to your account (%s) shortly.",
             withdrawal.Amount,
             withdrawal.Reference,
             user.Balance,
+            user.PhoneNumber,
         ),
     )
 
@@ -199,15 +201,17 @@ func (b *Bot) approveWithdraw(ctx context.Context, chatID int64, transactionID s
     b.logAdminAction(ctx, chatID, "approve_withdraw", withdrawal.UserID, "withdraw",
         fmt.Sprintf("Approved withdrawal %.2f ETB for user %d", withdrawal.Amount, withdrawal.UserID))
 
-    // Confirm to admin
+    // Confirm to admin with phone number
     b.sendMarkdown(ctx, chatID, fmt.Sprintf(
         "✅ *Withdrawal Approved*\n\n"+
             "💰 Amount: %.2f ETB\n"+
             "👤 User: @%s\n"+
+            "📱 Phone: %s\n"+
             "🆔 Reference: `%s`\n"+
             "💳 New Balance: %.2f ETB",
         withdrawal.Amount,
         user.Username,
+        user.PhoneNumber,
         withdrawal.Reference,
         user.Balance,
     ))
@@ -260,14 +264,16 @@ func (b *Bot) rejectWithdraw(ctx context.Context, chatID int64, transactionID st
     b.logAdminAction(ctx, chatID, "reject_withdraw", withdrawal.UserID, "withdraw",
         fmt.Sprintf("Rejected withdrawal %.2f ETB for user %d", withdrawal.Amount, withdrawal.UserID))
 
-    // Confirm to admin
+    // Confirm to admin with phone number
     b.sendMarkdown(ctx, chatID, fmt.Sprintf(
         "❌ *Withdrawal Rejected*\n\n"+
             "💰 Amount: %.2f ETB\n"+
             "👤 User: @%s\n"+
+            "📱 Phone: %s\n"+
             "🆔 Reference: `%s`",
         withdrawal.Amount,
         user.Username,
+        user.PhoneNumber,
         withdrawal.Reference,
     ))
 }
@@ -276,15 +282,23 @@ func (b *Bot) rejectWithdraw(ctx context.Context, chatID int64, transactionID st
 func (b *Bot) searchWithdrawals(ctx context.Context, chatID int64, query string) {
     var withdrawals []models.Transaction
 
-    // Try to find user by username or telegram_id
+    // Try to find user by username, phone number, or telegram_id
     var user models.User
     userFound := false
+    
+    // Search by @username
     if strings.HasPrefix(query, "@") {
         username := strings.TrimPrefix(query, "@")
         if err := b.db.Where("username = ?", username).First(&user).Error; err == nil {
             userFound = true
         }
+    } else if strings.HasPrefix(query, "09") && len(query) >= 10 {
+        // Search by phone number
+        if err := b.db.Where("phone_number = ?", query).First(&user).Error; err == nil {
+            userFound = true
+        }
     } else if id, err := strconv.ParseInt(query, 10, 64); err == nil {
+        // Search by Telegram ID
         if err := b.db.Where("telegram_id = ?", id).First(&user).Error; err == nil {
             userFound = true
         }
@@ -328,10 +342,11 @@ func (b *Bot) searchWithdrawals(ctx context.Context, chatID int64, query string)
             ctx,
             chatID,
             fmt.Sprintf(
-                "%s %.2f ETB | @%s | %s | Ref: %s",
+                "%s %.2f ETB | @%s | 📱%s | %s | Ref: %s",
                 statusEmoji,
                 withdrawal.Amount,
                 u.Username,
+                u.PhoneNumber,
                 withdrawal.CreatedAt.Format("Jan 2, 15:04"),
                 withdrawal.Reference,
             ),
@@ -409,7 +424,7 @@ func (b *Bot) showWithdrawalStats(ctx context.Context, chatID int64) {
     )
 }
 
-// sendWithdrawalCard - Send a detailed withdrawal card
+// sendWithdrawalCard - Send a detailed withdrawal card with phone number
 func (b *Bot) sendWithdrawalCard(ctx context.Context, chatID int64, withdrawal models.Transaction) {
     var user models.User
     b.db.First(&user, withdrawal.UserID)
@@ -428,6 +443,7 @@ func (b *Bot) sendWithdrawalCard(ctx context.Context, chatID int64, withdrawal m
         "🏧 *Withdrawal #%s*\n\n"+
             "👤 User: @%s\n"+
             "🆔 ID: %d\n"+
+            "📱 Phone: %s\n"+
             "💰 Amount: %.2f ETB\n"+
             "📱 Method: %s\n"+
             "🆔 Reference: `%s`\n"+
@@ -436,6 +452,7 @@ func (b *Bot) sendWithdrawalCard(ctx context.Context, chatID int64, withdrawal m
         withdrawal.ID.String()[:8],
         user.Username,
         user.TelegramID,
+        user.PhoneNumber,
         withdrawal.Amount,
         withdrawal.Method,
         withdrawal.Reference,
@@ -453,6 +470,7 @@ func (b *Bot) sendWithdrawalCard(ctx context.Context, chatID int64, withdrawal m
         }
         b.sendMessage(ctx, &msg)
     } else {
+        // ✅ Include phone number in completed/failed cards too
         b.sendMarkdown(ctx, chatID, text)
     }
 }
