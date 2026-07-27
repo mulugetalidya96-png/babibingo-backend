@@ -175,7 +175,6 @@ func (b *Bot) showDashboard(ctx context.Context, chatID int64) {
 				"💰 *Today's Activity:*\n"+
 				"• Deposits: %.2f ETB\n"+
 				"• Withdrawals: %.2f ETB\n\n"+
-				"🤖 Uptime: %s\n\n"+
 				"📋 Use /help for commands",
 			pendingAgents,
 			pendingDeposits,
@@ -185,7 +184,6 @@ func (b *Bot) showDashboard(ctx context.Context, chatID int64) {
 			totalAgents,
 			todayDeposits,
 			todayWithdrawals,
-			b.getUptime(),
 		),
 		ParseMode: "Markdown",
 		ReplyMarkup: &telego.InlineKeyboardMarkup{

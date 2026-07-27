@@ -107,7 +107,7 @@ func New(token string, db *gorm.DB, cfg *config.Config, engine *game.Engine) (*B
 		engine:     engine,
 		startTime:  time.Now(),
 		botSettings: BotSettings{
-			AutoApprove: false, // ✅ Only Admin Bot setting
+			AutoApprove: false,
 		},
 	}
 
@@ -279,17 +279,12 @@ func (b *Bot) sendUnauthorized(ctx context.Context, chatID int64) {
 	)
 }
 
-func (b *Bot) getUptime() string {
-	duration := time.Since(b.startTime)
-	hours := int(duration.Hours())
-	minutes := int(duration.Minutes()) % 60
-	return fmt.Sprintf("%dh %dm", hours, minutes)
-}
-
+// ✅ getBotSettings - Get current bot settings
 func (b *Bot) getBotSettings() BotSettings {
 	return b.botSettings
 }
 
+// ✅ updateBotSettings - Update bot settings
 func (b *Bot) updateBotSettings(settings BotSettings) {
 	b.botSettings = settings
 }
