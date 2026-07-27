@@ -56,7 +56,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *telego.Message) {
 	case "💳 Deposit":
 		b.handleDeposit(ctx, chatID)
 	case "🏧 Withdraw":
-		b.handleWithdraw(ctx, chatID)
+		b.handleWithdraw(ctx, chatID,user)
 	case "🤝 Agent":
 		b.handleAgent(ctx, chatID, user)
 	case "📨 Invite":

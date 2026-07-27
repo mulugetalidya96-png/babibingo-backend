@@ -3,7 +3,10 @@ package bot
 import (
 	"context"
 	"fmt"
+	"log"
+	"strconv"
 	"strings"
+	"time"
 
 	"babibingo/internal/models"
 
@@ -243,19 +246,165 @@ func (b *Bot) sendCBEBirrDepositInfo(
 			"⚠️ Include your Telegram username in the reference.",
 	)
 }
+// internal/bot/command.go - handleWithdraw
+
 func (b *Bot) handleWithdraw(
 	ctx context.Context,
 	chatID int64,
+	user *telego.User,
 ) {
+	// ✅ Get user from database
+	var dbUser models.User
+	if err := b.db.Where("telegram_id = ?", user.ID).First(&dbUser).Error; err != nil {
+		b.sendText(ctx, chatID, "❌ Please register first with /start")
+		return
+	}
 
+	// ✅ Check minimum balance
+	minWithdraw := 100.0
+	if dbUser.Balance < minWithdraw {
+		b.sendMarkdown(
+			ctx,
+			chatID,
+			fmt.Sprintf(
+				"❌ *Insufficient Balance*\n\n"+
+					"Your current balance: %.2f ETB\n"+
+					"Minimum withdrawal: %.2f ETB\n\n"+
+					"💡 Please play more or deposit to reach the minimum withdrawal amount.",
+				dbUser.Balance,
+				minWithdraw,
+			),
+		)
+		return
+	}
+
+	// ✅ Prompt for amount
+	msg := telego.SendMessageParams{
+		ChatID: telego.ChatID{
+			ID: chatID,
+		},
+		Text: fmt.Sprintf(
+			"🏧 *Withdrawal Request*\n\n"+
+				"💰 Your balance: %.2f ETB\n"+
+				"📉 Minimum withdrawal: %.2f ETB\n"+
+				"📈 Maximum withdrawal: %.2f ETB\n\n"+
+				"📝 Please enter the amount you want to withdraw.\n\n"+
+				"Example: `100`",
+			dbUser.Balance,
+			minWithdraw,
+			dbUser.Balance,
+		),
+		ParseMode: "Markdown",
+		ReplyMarkup: &telego.InlineKeyboardMarkup{
+			InlineKeyboard: [][]telego.InlineKeyboardButton{
+				{
+					{
+						Text:         "🔙 Back",
+						CallbackData: "back_to_menu",
+					},
+				},
+			},
+		},
+	}
+
+	b.sendMessage(ctx, &msg)
+
+	// ✅ Store the user's state to expect amount input
+	b.tempState.Store(chatID, "awaiting_withdraw_amount")
+}
+
+// ✅ Handle the withdrawal amount input
+func (b *Bot) handleWithdrawAmount(
+	ctx context.Context,
+	chatID int64,
+	user *telego.User,
+	text string,
+) {
+	// Parse amount
+	amount, err := strconv.ParseFloat(text, 64)
+	if err != nil || amount <= 0 {
+		b.sendText(ctx, chatID, "❌ Invalid amount. Please enter a valid number.\n\nExample: `100`")
+		return
+	}
+
+	// ✅ Get user from database
+	var dbUser models.User
+	if err := b.db.Where("telegram_id = ?", user.ID).First(&dbUser).Error; err != nil {
+		b.sendText(ctx, chatID, "❌ Please register first with /start")
+		return
+	}
+
+	// ✅ Validate amount
+	minWithdraw := 100.0
+	if amount < minWithdraw {
+		b.sendMarkdown(
+			ctx,
+			chatID,
+			fmt.Sprintf(
+				"❌ *Amount Too Low*\n\n"+
+					"Amount: %.2f ETB\n"+
+					"Minimum withdrawal: %.2f ETB\n\n"+
+					"Please enter a higher amount.",
+				amount,
+				minWithdraw,
+			),
+		)
+		return
+	}
+
+	if amount > dbUser.Balance {
+		b.sendMarkdown(
+			ctx,
+			chatID,
+			fmt.Sprintf(
+				"❌ *Insufficient Balance*\n\n"+
+					"Your balance: %.2f ETB\n"+
+					"Requested: %.2f ETB\n\n"+
+					"Please enter a lower amount.",
+				dbUser.Balance,
+				amount,
+			),
+		)
+		return
+	}
+
+	// ✅ Create pending withdrawal transaction
+	transaction := models.Transaction{
+		UserID:      dbUser.ID,
+		Type:        "withdraw",
+		Amount:      amount,
+		Status:      "pending",
+		Method:      "telebirr",
+		Reference:   fmt.Sprintf("WTH-%d-%d", dbUser.ID, time.Now().UnixNano()),
+		Description: fmt.Sprintf("Withdrawal request for %.2f ETB", amount),
+		CreatedAt:   time.Now(),
+	}
+
+	if err := b.db.Create(&transaction).Error; err != nil {
+		log.Printf("Failed to create withdrawal transaction: %v", err)
+		b.sendText(ctx, chatID, "❌ Failed to process withdrawal request. Please try again.")
+		return
+	}
+
+	// ✅ Send confirmation to user
 	b.sendMarkdown(
 		ctx,
 		chatID,
-
-		"🏧 *Withdrawal*\n\n"+
-			"Open WebApp to request withdrawal.\n"+
-			"Minimum withdrawal: 50 ETB",
+		fmt.Sprintf(
+			"✅ *Withdrawal Request Submitted*\n\n"+
+				"💰 Amount: %.2f ETB\n"+
+				"🆔 Reference: `%s`\n"+
+				"📊 Status: Pending\n\n"+
+				"⏳ Your request is being processed by our team.\n"+
+				"You will be notified once it's approved.\n\n"+
+				"📌 If you have any questions, please contact support.",
+			amount,
+			transaction.Reference,
+		),
 	)
+
+	// ✅ Clear the user's state
+	b.tempState.Delete(chatID)
 }
 // handleAgent handles agent-related actions
 // internal/bot/command.go - handleAgent

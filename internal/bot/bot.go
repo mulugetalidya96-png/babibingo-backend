@@ -19,6 +19,7 @@ type Bot struct {
 	cfg                *config.Config
 	webAppURL          string
 	tempReferralCache  sync.Map // ✅ Add this field
+	tempState          sync.Map
 }
 
 // New creates a new Bot instance
@@ -50,6 +51,7 @@ func New(
 		cfg:               cfg,
 		webAppURL:         webAppURL,
 		tempReferralCache: sync.Map{}, // ✅ Initialize the sync.Map
+		tempState:         sync.Map{},
 	}
 
 	if err := b.setupCommands(ctx); err != nil {
