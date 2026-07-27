@@ -16,6 +16,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// ✅ BotSettings - Must be defined here since it's used
+type BotSettings struct {
+	DesiredCount int
+	Speed        int
+	MaxBots      int
+	AutoApprove  bool
+}
+
 type Bot struct {
 	api         *telego.Bot
 	me          *telego.User
@@ -96,18 +104,19 @@ func New(token string, db *gorm.DB, cfg *config.Config, engine *game.Engine) (*B
 	}
 
 	b := &Bot{
-		api:      api,
-		me:       me,
-		db:       db,
-		cfg:      cfg,
-		admins:   adminIDs,
-		botName:  me.Username,
-		engine:   engine,
-		startTime: time.Now(),
+		api:        api,
+		me:         me,
+		db:         db,
+		cfg:        cfg,
+		admins:     adminIDs,
+		botName:    me.Username,
+		engine:     engine,
+		startTime:  time.Now(),
 		botSettings: BotSettings{
 			DesiredCount: 20,
 			Speed:        2,
 			MaxBots:      50,
+			AutoApprove:  false,
 		},
 	}
 
@@ -148,10 +157,26 @@ func (b *Bot) setupCommands(ctx context.Context) error {
 	return err
 }
 
+// ✅ Updated Start with 409 Conflict Handling
+// ✅ Updated Start with Webhook Clearing
 func (b *Bot) Start(ctx context.Context) error {
 	log.Printf("🚀 Starting admin bot @%s...", b.me.Username)
 
+	// ✅ IMPORTANT: Clear any existing webhook
+	err := b.api.DeleteWebhook(ctx, &telego.DeleteWebhookParams{
+		DropPendingUpdates: true,
+	})
+	if err != nil {
+		log.Printf("⚠️ Failed to delete webhook: %v", err)
+	} else {
+		log.Println("✅ Webhook cleared successfully")
+	}
+
+	// Wait a moment for Telegram to process
+	time.Sleep(2 * time.Second)
+
 	var offset int = 0
+	retryCount := 0
 
 	for {
 		select {
@@ -165,9 +190,37 @@ func (b *Bot) Start(ctx context.Context) error {
 				Limit:   100,
 			})
 			if err != nil {
+				// ✅ Handle 409 conflict with exponential backoff
+				if strings.Contains(err.Error(), "409") {
+					retryCount++
+					waitTime := 5 * retryCount
+					if waitTime > 30 {
+						waitTime = 30
+					}
+					log.Printf("⚠️ Conflict detected (attempt %d), waiting %ds...", retryCount, waitTime)
+
+					// Try to get latest offset
+					latest, _ := b.api.GetUpdates(ctx, &telego.GetUpdatesParams{
+						Limit: 1,
+					})
+					if len(latest) > 0 {
+						offset = latest[0].UpdateID + 1
+						log.Printf("🔄 Reset offset to: %d", offset)
+					} else {
+						// ✅ Reset offset to 0 if no updates
+						offset = 0
+					}
+
+					time.Sleep(time.Duration(waitTime) * time.Second)
+					continue
+				}
 				log.Printf("Error getting updates: %v", err)
+				time.Sleep(5 * time.Second)
 				continue
 			}
+
+			// Reset retry count on success
+			retryCount = 0
 
 			for _, update := range updates {
 				if update.Message != nil {
@@ -184,9 +237,8 @@ func (b *Bot) Start(ctx context.Context) error {
 
 // ✅ Notify admins when bot starts
 func (b *Bot) notifyAdminsStartup(ctx context.Context) {
-	time.Sleep(2 * time.Second) // Wait for bot to fully start
+	time.Sleep(2 * time.Second)
 
-	// Get some stats for the startup message
 	var totalUsers int64
 	b.db.Model(&models.User{}).Count(&totalUsers)
 
@@ -250,3 +302,20 @@ func (b *Bot) sendUnauthorized(ctx context.Context, chatID int64) {
 	)
 }
 
+// ✅ getUptime - Get bot uptime
+func (b *Bot) getUptime() string {
+	duration := time.Since(b.startTime)
+	hours := int(duration.Hours())
+	minutes := int(duration.Minutes()) % 60
+	return fmt.Sprintf("%dh %dm", hours, minutes)
+}
+
+// ✅ getBotSettings - Get current bot settings
+func (b *Bot) getBotSettings() BotSettings {
+	return b.botSettings
+}
+
+// ✅ updateBotSettings - Update bot settings
+func (b *Bot) updateBotSettings(settings BotSettings) {
+	b.botSettings = settings
+}

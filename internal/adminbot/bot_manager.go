@@ -233,7 +233,6 @@ func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 				"• Interval: %ds\n\n"+
 				"📅 *Today's Activity:*\n"+
 				"• Reserved: %d cards\n\n"+
-				"⏱️ Uptime: %s\n\n"+
 				"💡 Use /bots set <count> to set desired bot count",
 			statusEmoji,
 			statusText,
@@ -248,7 +247,6 @@ func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 			stats.MaxBotsPerGame,
 			stats.ReserveInterval,
 			stats.TodayReserved,
-			b.getUptime(),
 		),
 		ParseMode: "Markdown",
 		ReplyMarkup: &telego.InlineKeyboardMarkup{
@@ -651,13 +649,7 @@ func (b *Bot) showDetailedBotStats(ctx context.Context, chatID int64) {
 	)
 }
 
-// ✅ getUptime - Get bot uptime
-func (b *Bot) getUptime() string {
-	duration := time.Since(b.startTime)
-	hours := int(duration.Hours())
-	minutes := int(duration.Minutes()) % 60
-	return fmt.Sprintf("%dh %dm", hours, minutes)
-}
+
 
 // ✅ showBotSettings - Show bot settings
 func (b *Bot) showBotSettings(ctx context.Context, chatID int64) {
