@@ -12,19 +12,18 @@ import (
 	"github.com/mymmrac/telego"
 )
 
-// ✅ BotSettings - Configuration structure (ADD THIS)
-type BotSettings struct {
+// ✅ RobotSettings - Game Engine Robot Settings (NOT Admin Bot settings)
+type RobotSettings struct {
 	DesiredCount int
 	Speed        int
 	MaxBots      int
-	AutoApprove  bool
 }
 
-var defaultBotSettings = BotSettings{
+// ✅ Default robot settings
+var defaultRobotSettings = RobotSettings{
 	DesiredCount: 20,
 	Speed:        2,
 	MaxBots:      50,
-	AutoApprove:  false,
 }
 
 // BotStats - Statistics structure
@@ -183,8 +182,8 @@ func (b *Bot) getBotStats() BotStats {
 	}
 
 	// ✅ Default values
-	stats.BotsPerTick = 2
-	stats.MaxBotsPerGame = 50
+	stats.BotsPerTick = b.getRobotSpeed()
+	stats.MaxBotsPerGame = b.getRobotMaxBots()
 	stats.ReserveInterval = 3
 
 	return stats
@@ -463,6 +462,17 @@ func (b *Bot) getDesiredBotCount() int {
 	return 20
 }
 
+// ✅ Robot Settings helpers
+func (b *Bot) getRobotSpeed() int {
+	// Read from engine or return default
+	return defaultRobotSettings.Speed
+}
+
+func (b *Bot) getRobotMaxBots() int {
+	// Read from engine or return default
+	return defaultRobotSettings.MaxBots
+}
+
 // ✅ startBots - Start bot routine
 func (b *Bot) startBots(ctx context.Context, chatID int64) {
 	if b.engine == nil {
@@ -540,6 +550,9 @@ func (b *Bot) setBotSpeed(ctx context.Context, chatID int64, speed int) {
 		return
 	}
 
+	// ✅ Update robot speed
+	defaultRobotSettings.Speed = speed
+
 	b.sendMarkdown(
 		ctx,
 		chatID,
@@ -561,6 +574,9 @@ func (b *Bot) setMaxBots(ctx context.Context, chatID int64, max int) {
 		b.sendText(ctx, chatID, "❌ Max bots must be between 5 and 100.\n\n💡 Recommended: 30-50 for optimal gameplay")
 		return
 	}
+
+	// ✅ Update robot max bots
+	defaultRobotSettings.MaxBots = max
 
 	b.sendMarkdown(
 		ctx,
@@ -649,8 +665,6 @@ func (b *Bot) showDetailedBotStats(ctx context.Context, chatID int64) {
 	)
 }
 
-
-
 // ✅ showBotSettings - Show bot settings
 func (b *Bot) showBotSettings(ctx context.Context, chatID int64) {
 	desiredCount := b.getDesiredBotCount()
@@ -674,8 +688,8 @@ func (b *Bot) showBotSettings(ctx context.Context, chatID int64) {
 				"/bots max <n> - Change max bots (5-100)",
 			b.getBotStatusText(),
 			desiredCount,
-			2, // default speed
-			50, // default max
+			b.getRobotSpeed(),
+			b.getRobotMaxBots(),
 			b.getCurrentBotCount(),
 			b.getTotalBotCount(),
 		),

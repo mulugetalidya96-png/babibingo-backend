@@ -16,12 +16,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// ✅ BotSettings - Must be defined here since it's used
+// ✅ Admin Bot Settings (ONLY Admin Bot specific)
 type BotSettings struct {
-	DesiredCount int
-	Speed        int
-	MaxBots      int
-	AutoApprove  bool
+	AutoApprove bool // Auto-approve agent applications
 }
 
 type Bot struct {
@@ -57,7 +54,6 @@ func New(token string, db *gorm.DB, cfg *config.Config, engine *game.Engine) (*B
 	var settings AdminConfig
 	if err := db.First(&settings).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			// Create default settings
 			settings = AdminConfig{
 				AutoApprove:      false,
 				NotifyOnApply:    true,
@@ -83,10 +79,8 @@ func New(token string, db *gorm.DB, cfg *config.Config, engine *game.Engine) (*B
 		}
 	}
 
-	// If no admins in database, use config as fallback
 	if len(adminIDs) == 0 {
 		adminIDs = cfg.GetAdminIDs()
-		// Save to database if config has admins
 		if len(adminIDs) > 0 {
 			idStrings := []string{}
 			for _, id := range adminIDs {
@@ -113,24 +107,18 @@ func New(token string, db *gorm.DB, cfg *config.Config, engine *game.Engine) (*B
 		engine:     engine,
 		startTime:  time.Now(),
 		botSettings: BotSettings{
-			DesiredCount: 20,
-			Speed:        2,
-			MaxBots:      50,
-			AutoApprove:  false,
+			AutoApprove: false, // ✅ Only Admin Bot setting
 		},
 	}
 
-	// Set commands
 	if err := b.setupCommands(ctx); err != nil {
 		log.Printf("Failed to set commands: %v", err)
 	}
 
 	log.Printf("🤖 Admin Bot started: @%s", me.Username)
 	log.Printf("🔐 Admin access: %d admins configured", len(adminIDs))
-	log.Printf("📊 Bot settings loaded: Desired=%d, Speed=%d, Max=%d",
-		b.botSettings.DesiredCount, b.botSettings.Speed, b.botSettings.MaxBots)
+	log.Printf("📊 Auto-approve: %v", b.botSettings.AutoApprove)
 
-	// ✅ Send startup notification to admins
 	go b.notifyAdminsStartup(ctx)
 
 	return b, nil
@@ -157,12 +145,10 @@ func (b *Bot) setupCommands(ctx context.Context) error {
 	return err
 }
 
-// ✅ Updated Start with 409 Conflict Handling
-// ✅ Updated Start with Webhook Clearing
 func (b *Bot) Start(ctx context.Context) error {
 	log.Printf("🚀 Starting admin bot @%s...", b.me.Username)
 
-	// ✅ IMPORTANT: Clear any existing webhook
+	// Clear any existing webhook
 	err := b.api.DeleteWebhook(ctx, &telego.DeleteWebhookParams{
 		DropPendingUpdates: true,
 	})
@@ -172,7 +158,6 @@ func (b *Bot) Start(ctx context.Context) error {
 		log.Println("✅ Webhook cleared successfully")
 	}
 
-	// Wait a moment for Telegram to process
 	time.Sleep(2 * time.Second)
 
 	var offset int = 0
@@ -190,7 +175,6 @@ func (b *Bot) Start(ctx context.Context) error {
 				Limit:   100,
 			})
 			if err != nil {
-				// ✅ Handle 409 conflict with exponential backoff
 				if strings.Contains(err.Error(), "409") {
 					retryCount++
 					waitTime := 5 * retryCount
@@ -199,7 +183,6 @@ func (b *Bot) Start(ctx context.Context) error {
 					}
 					log.Printf("⚠️ Conflict detected (attempt %d), waiting %ds...", retryCount, waitTime)
 
-					// Try to get latest offset
 					latest, _ := b.api.GetUpdates(ctx, &telego.GetUpdatesParams{
 						Limit: 1,
 					})
@@ -207,7 +190,6 @@ func (b *Bot) Start(ctx context.Context) error {
 						offset = latest[0].UpdateID + 1
 						log.Printf("🔄 Reset offset to: %d", offset)
 					} else {
-						// ✅ Reset offset to 0 if no updates
 						offset = 0
 					}
 
@@ -219,7 +201,6 @@ func (b *Bot) Start(ctx context.Context) error {
 				continue
 			}
 
-			// Reset retry count on success
 			retryCount = 0
 
 			for _, update := range updates {
@@ -235,7 +216,6 @@ func (b *Bot) Start(ctx context.Context) error {
 	}
 }
 
-// ✅ Notify admins when bot starts
 func (b *Bot) notifyAdminsStartup(ctx context.Context) {
 	time.Sleep(2 * time.Second)
 
@@ -256,7 +236,7 @@ func (b *Bot) notifyAdminsStartup(ctx context.Context) {
 			"🤝 Agents: %d\n"+
 			"🎱 Games: %d\n\n"+
 			"📈 Bot Status: ✅ Running\n"+
-			"🔧 Settings: Auto-approve=%v\n\n"+
+			"🔧 Auto-approve: %v\n\n"+
 			"Use /dashboard to see the admin panel.",
 		time.Now().Format("Jan 2, 2006 15:04:05"),
 		len(b.admins),
@@ -271,7 +251,6 @@ func (b *Bot) notifyAdminsStartup(ctx context.Context) {
 	}
 }
 
-// isAdmin checks if user is authorized
 func (b *Bot) isAdmin(userID int64) bool {
 	for _, id := range b.admins {
 		if id == userID {
@@ -281,7 +260,6 @@ func (b *Bot) isAdmin(userID int64) bool {
 	return false
 }
 
-// checkAdminAccess validates admin access
 func (b *Bot) checkAdminAccess(ctx context.Context, chatID int64, userID int64) bool {
 	if !b.isAdmin(userID) {
 		b.sendUnauthorized(ctx, chatID)
@@ -290,7 +268,6 @@ func (b *Bot) checkAdminAccess(ctx context.Context, chatID int64, userID int64) 
 	return true
 }
 
-// sendUnauthorized sends access denied message
 func (b *Bot) sendUnauthorized(ctx context.Context, chatID int64) {
 	b.sendMarkdown(
 		ctx,
@@ -302,7 +279,6 @@ func (b *Bot) sendUnauthorized(ctx context.Context, chatID int64) {
 	)
 }
 
-// ✅ getUptime - Get bot uptime
 func (b *Bot) getUptime() string {
 	duration := time.Since(b.startTime)
 	hours := int(duration.Hours())
@@ -310,12 +286,10 @@ func (b *Bot) getUptime() string {
 	return fmt.Sprintf("%dh %dm", hours, minutes)
 }
 
-// ✅ getBotSettings - Get current bot settings
 func (b *Bot) getBotSettings() BotSettings {
 	return b.botSettings
 }
 
-// ✅ updateBotSettings - Update bot settings
 func (b *Bot) updateBotSettings(settings BotSettings) {
 	b.botSettings = settings
 }
