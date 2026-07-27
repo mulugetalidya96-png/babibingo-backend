@@ -714,4 +714,4 @@ func (b *Bot) getTotalBotCount() int {
 	return int(count)
 }
 
-// ✅ getBotSettings - Get current bot settings
+

@@ -303,7 +303,7 @@ func (b *Bot) handleAgent(
 					"🔑 Referral Code: `%s`\n\n"+
 					"📤 Share your referral link to earn commissions!\n"+
 					"1 ETB per card played by your invited users.\n\n"+
-					"🔗 https://t.me/babibingo_bot?start=ref_%d",
+					"🔗 https://t.me/babibingo\\_bot?start=ref\\_%d",
 				u.AgentBalance,
 				totalCommission,
 				referralCount,
