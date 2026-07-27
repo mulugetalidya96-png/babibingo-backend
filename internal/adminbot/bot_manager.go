@@ -190,6 +190,7 @@ func (b *Bot) getBotStats() BotStats {
 }
 
 // ✅ showBotStatus - Show real bot status with count controls
+// ✅ showBotStatus - Show real bot status with count controls (NO UPTIME)
 func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 	// ✅ Recovery from panic
 	defer func() {
