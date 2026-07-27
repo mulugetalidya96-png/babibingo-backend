@@ -3,6 +3,7 @@ package game
 import (
 	"babibingo/internal/models"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -39,6 +40,10 @@ type Engine struct {
 func NewEngine(db *gorm.DB, rdb *redis.Client) *Engine {
 	InitCardCache()
 	
+	if err := db.AutoMigrate(&models.RobotBotSettings{}); err != nil {
+		log.Printf("Failed to migrate BotSettings: %v", err)
+	}
+
 	engine := &Engine{
 		db:      db,
 		rdb:     rdb,

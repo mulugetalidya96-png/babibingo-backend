@@ -5,13 +5,14 @@ import (
 	"log"
 	"math/rand"
 	"sync"
-	"sync/atomic" // ✅ IMPORTANT: Add this
+	"sync/atomic"
 	"time"
 
 	"babibingo/internal/models"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	"gorm.io/gorm"
 )
 
 // BotManager manages bot players
@@ -21,7 +22,7 @@ type BotManager struct {
 	mu           sync.RWMutex
 	isRunning    bool
 	stopChan     chan bool
-	desiredCount int32 // ✅ Changed to int32 for atomic operations
+	desiredCount int32
 }
 
 // Bot represents a simulated player
@@ -32,15 +33,55 @@ type Bot struct {
 
 // NewBotManager creates a new bot manager
 func NewBotManager(engine *Engine) *BotManager {
-	return &BotManager{
+	bm := &BotManager{
 		engine:       engine,
 		bots:         make([]*Bot, 0),
 		stopChan:     make(chan bool),
-		desiredCount: 20, // ✅ Default: 20 bots per game
+		desiredCount: 20,
+	}
+
+	// ✅ Load saved desired count from database
+	bm.loadDesiredCount()
+
+	return bm
+}
+
+// ✅ loadDesiredCount - Load from database
+func (bm *BotManager) loadDesiredCount() {
+	var settings models.RobotBotSettings
+	err := bm.engine.db.First(&settings).Error
+	if err == nil {
+		atomic.StoreInt32(&bm.desiredCount, int32(settings.DesiredCount))
+		log.Printf("🤖 Loaded desired bot count from DB: %d", settings.DesiredCount)
+	} else {
+		if err == gorm.ErrRecordNotFound {
+			// Create default settings
+			settings = models.RobotBotSettings{
+				DesiredCount: 20,
+				UpdatedAt:    time.Now(),
+			}
+			if createErr := bm.engine.db.Create(&settings).Error; createErr != nil {
+				log.Printf("⚠️ Failed to create default bot settings: %v", createErr)
+			} else {
+				log.Println("🤖 Created default bot settings in DB")
+			}
+		} else {
+			log.Printf("⚠️ Failed to load bot settings: %v", err)
+		}
 	}
 }
 
-// ✅ SetDesiredCount sets the desired number of bots per game (ATOMIC)
+// ✅ saveDesiredCount - Save to database
+func (bm *BotManager) saveDesiredCount() {
+	count := int(atomic.LoadInt32(&bm.desiredCount))
+	err := bm.engine.db.Model(&models.RobotBotSettings{}).First(&models.RobotBotSettings{}).
+		Update("desired_count", count).Error
+	if err != nil {
+		log.Printf("⚠️ Failed to save desired bot count: %v", err)
+	}
+}
+
+// ✅ SetDesiredCount sets the desired number of bots per game (ATOMIC + PERSISTENT)
 func (bm *BotManager) SetDesiredCount(count int) {
 	if count < 0 {
 		count = 0
@@ -49,6 +90,10 @@ func (bm *BotManager) SetDesiredCount(count int) {
 		count = 100
 	}
 	atomic.StoreInt32(&bm.desiredCount, int32(count))
+
+	// ✅ Save to database
+	bm.saveDesiredCount()
+
 	log.Printf("🤖 Desired bot count set to: %d", count)
 }
 
@@ -384,7 +429,7 @@ func (bm *BotManager) checkAndReserveBots() {
 
 	currentPlayers := len(state.UserCards)
 	availableCount := 400 - len(state.ReservedCards)
-	desiredCount := bm.GetDesiredCount() // ✅ Atomic call
+	desiredCount := bm.GetDesiredCount()
 	state.mu.RUnlock()
 
 	// ✅ Don't add bots if we already have enough
@@ -422,7 +467,7 @@ func (bm *BotManager) GetBotStats() map[string]interface{} {
 	return map[string]interface{}{
 		"total_bots":    len(bm.bots),
 		"is_running":    bm.isRunning,
-		"desired_count": int(atomic.LoadInt32(&bm.desiredCount)), // ✅ Atomic load
+		"desired_count": int(atomic.LoadInt32(&bm.desiredCount)),
 	}
 }
 

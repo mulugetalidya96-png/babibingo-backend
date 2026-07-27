@@ -110,3 +110,11 @@ type GamePlayer struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+// internal/models/models.go - Add this
+
+// BotSettings stores bot configuration
+type RobotBotSettings struct {
+	ID            uint   `gorm:"primaryKey"`
+	DesiredCount  int    `gorm:"default:20"`
+	UpdatedAt     time.Time
+}
