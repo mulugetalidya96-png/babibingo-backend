@@ -127,7 +127,7 @@ func (b *Bot) handleTelebirrSMS(
 	b.sendText(ctx, chatID, "⏳ Verifying transaction with verify.et...")
 
 	// 6️⃣ Get phone number
-	babiBingoPhone := "0997325583"
+	babiBingoPhone := "0994027828"
 
 	// 7️⃣ Call verify.et API
 	verifyClient := verify.NewVerifyClient(b.cfg.VerifyAPIKey)
@@ -286,7 +286,7 @@ func (b *Bot) handleCBEBirrSMS(
 	b.sendText(ctx, chatID, "⏳ Verifying CBE Birr transaction with verify.et...")
 
 	// 6️⃣ Set our business name (receiver)
-	businessName := "BabiBingo"
+	businessName := "Yonatan Desalegn"
 
 	// 7️⃣ Call verify.et API for CBE Birr
 	verifyClient := verify.NewVerifyClient(b.cfg.VerifyAPIKey)
