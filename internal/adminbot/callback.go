@@ -178,9 +178,24 @@ func (b *Bot) handleGamesCallback(ctx context.Context, chatID int64, data string
 }
 
 // ✅ handleBotsCallback - Bots menu callbacks
+// callback.go - Update handleBotsCallback
+
 func (b *Bot) handleBotsCallback(ctx context.Context, chatID int64, data string) {
 	switch data {
-
+	case "bots_status":
+		b.showBotStatus(ctx, chatID)
+	case "bots_refresh":
+		b.showBotStatus(ctx, chatID)
+	case "bots_set_prompt":
+		b.sendText(ctx, chatID, "📝 Please enter the desired bot count (1-100):\n\nExample: /bots set 30")
+	case "bots_add_5":
+		b.addBots(ctx, chatID, 5)
+	case "bots_add_10":
+		b.addBots(ctx, chatID, 10)
+	case "bots_remove_5":
+		b.removeBots(ctx, chatID, 5)
+	case "bots_remove_10":
+		b.removeBots(ctx, chatID, 10)
 	case "bots_reset_confirm":
 		b.handleBotsResetConfirm(ctx, chatID)
 	case "bots_reset_cancel":

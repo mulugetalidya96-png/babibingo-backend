@@ -15,29 +15,34 @@ type VerifyClient struct {
 	Client  *http.Client
 }
 
-// ✅ Correct request format for Telebirr
+// ✅ Unified request format for all banks
 type VerifyRequest struct {
 	Bank              string `json:"bank"`
-	TransactionNumber string `json:"transactionNumber"`
-	SettlementAccount string `json:"settlementAccount,omitempty"`
+	TransactionNumber string `json:"transactionNumber,omitempty"`
+	ReferenceNumber   string `json:"referenceNumber,omitempty"`   // For CBE Birr
+	AccountSuffix     string `json:"accountSuffix,omitempty"`     // For CBE Birr
+	PhoneNumber       string `json:"phoneNumber,omitempty"`       // For CBE Birr
+	SettlementAccount string `json:"settlementAccount,omitempty"` // For Telebirr
 }
 
-// ✅ Correct response format
+// ✅ Unified response format
 type VerifyResponse struct {
 	Success   bool   `json:"success"`
 	Message   string `json:"message"`
 	RequestID string `json:"requestId"`
 	Data      []struct {
-		Bank               string  `json:"bank"`
-		Status             string  `json:"status"`
-		Verified           bool    `json:"verified"`
-		Amount             float64 `json:"amount"`
-		Currency           string  `json:"currency"`
-		SenderName         string  `json:"senderName"`
-		ReceiverName       string  `json:"receiverName"`
-		ReceiverAccount    string  `json:"receiverAccount"`
-		TransactionNumber  string  `json:"transactionNumber"`
-		Timestamp          string  `json:"timestamp"`
+		Bank              string  `json:"bank"`
+		Status            string  `json:"status"`
+		Verified          bool    `json:"verified"`
+		Amount            float64 `json:"amount"`
+		Currency          string  `json:"currency"`
+		SenderName        string  `json:"senderName"`
+		ReceiverName      string  `json:"receiverName"`
+		ReceiverAccount   string  `json:"receiverAccount"`
+		TransactionNumber string  `json:"transactionNumber"`
+		ReferenceNumber   string  `json:"referenceNumber"`
+		AccountSuffix     string  `json:"accountSuffix"`
+		Timestamp         string  `json:"timestamp"`
 		SettlementAccountMatch struct {
 			Matched          bool   `json:"matched"`
 			MatchType        string `json:"matchType"`
@@ -64,15 +69,30 @@ func NewVerifyClient(apiKey string) *VerifyClient {
 	}
 }
 
-func (c *VerifyClient) VerifyTransaction(txnID string, amount float64, receiverPhone string) (*VerifyResponse, error) {
-	url := fmt.Sprintf("%s/api/verify?waitMs=5000", c.BaseURL)
-
-	// ✅ Correct request body for Telebirr
+// ✅ VerifyTeleBirrTransaction - Verify Telebirr transaction
+func (c *VerifyClient) VerifyTeleBirrTransaction(txnID string, amount float64, receiverPhone string) (*VerifyResponse, error) {
 	reqBody := VerifyRequest{
 		Bank:              "telebirr",
 		TransactionNumber: txnID,
 		SettlementAccount: receiverPhone,
 	}
+	return c.doVerify(reqBody, txnID)
+}
+
+// ✅ VerifyCBEBirrTransaction - Verify CBE Birr transaction
+func (c *VerifyClient) VerifyCBEBirrTransaction(referenceNumber string, accountSuffix string, phoneNumber string, amount float64) (*VerifyResponse, error) {
+	reqBody := VerifyRequest{
+		Bank:            "cbebirr",
+		ReferenceNumber: referenceNumber,
+		AccountSuffix:   accountSuffix,
+		PhoneNumber:     phoneNumber,
+	}
+	return c.doVerify(reqBody, referenceNumber)
+}
+
+// ✅ Unified verify method
+func (c *VerifyClient) doVerify(reqBody VerifyRequest, idempotencyKey string) (*VerifyResponse, error) {
+	url := fmt.Sprintf("%s/api/verify?waitMs=5000", c.BaseURL)
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
@@ -84,10 +104,9 @@ func (c *VerifyClient) VerifyTransaction(txnID string, amount float64, receiverP
 		return nil, err
 	}
 
-	// ✅ Correct headers
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", c.APIKey) // ✅ Use x-api-key instead of Bearer
-	req.Header.Set("Idempotency-Key", fmt.Sprintf("verify-%s-%d", txnID, time.Now().Unix()))
+	req.Header.Set("x-api-key", c.APIKey)
+	req.Header.Set("Idempotency-Key", fmt.Sprintf("verify-%s-%d", idempotencyKey, time.Now().Unix()))
 
 	if c.APIKey == "" {
 		return nil, fmt.Errorf("verify.et API key is not configured")

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"runtime/debug"
 	"strconv"
 
 	"babibingo/internal/models"
@@ -21,84 +20,55 @@ var defaultRobotSettings = RobotSettings{
 	DesiredCount: 20,
 }
 
-// handleBots - With debug logging
+// handleBots - Main bot handler
 func (b *Bot) handleBots(ctx context.Context, chatID int64, args []string) {
-	log.Printf("🟢 handleBots called with args: %v", args)
-	
 	if len(args) == 0 {
-		log.Printf("🟢 No args, showing status")
 		b.showBotStatus(ctx, chatID)
 		return
 	}
 
 	switch args[0] {
 	case "set":
-		log.Printf("🟢 Set command detected")
 		if len(args) > 1 {
 			count, err := strconv.Atoi(args[1])
-			if err != nil || count < 0 || count > 100 {
-				b.sendText(ctx, chatID, "❌ Invalid count. Use: /bots set <1-100>")
+			if err != nil || count < 1 || count > 100 {
+				b.sendText(ctx, chatID, "❌ Invalid count. Please enter a number between 1 and 100.\n\nExample: /bots set 30")
 				return
 			}
 			b.setBotCount(ctx, chatID, count)
 		} else {
-			b.sendText(ctx, chatID, "❌ Usage: /bots set <count>")
+			b.sendText(ctx, chatID, "📝 Please enter the desired bot count (1-100):\n\nExample: /bots set 30")
 		}
 	case "status":
-		log.Printf("🟢 Status command detected")
 		b.showBotStatus(ctx, chatID)
 	default:
-		log.Printf("🟢 Unknown command: %s", args[0])
-		b.sendText(ctx, chatID, "❌ Usage: /bots set <count>  or  /bots status")
+		b.sendText(ctx, chatID, "❌ Unknown command.\n\nAvailable:\n/bots status - Show bot status\n/bots set <count> - Set bot count (1-100)")
 	}
 }
 
-// ✅ showBotStatus - With extensive debug logging
-// ✅ showBotStatus - With db nil check
+// ✅ showBotStatus - With interactive buttons
 func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
-	log.Printf("🔵 showBotStatus: STARTED")
-	
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("🔴 PANIC in showBotStatus: %v", r)
-			b.sendText(ctx, chatID, fmt.Sprintf("❌ Error loading status: %v", r))
+			log.Printf("🔴 Panic in showBotStatus: %v", r)
+			b.sendText(ctx, chatID, "❌ Error loading status. Please try again.")
 		}
 	}()
 
-	// ✅ CHECK: Is db nil?
-	if b.db == nil {
-		log.Printf("🔴 CRITICAL: b.db is nil!")
-		b.sendText(ctx, chatID, "❌ Database connection error")
-		return
-	}
-	log.Printf("🔵 showBotStatus: db is not nil")
-
-	log.Printf("🔵 showBotStatus: Getting total bots from DB...")
+	// Get total bots
 	var totalBots int64
 	if err := b.db.Model(&models.User{}).Where("is_bot = ?", true).Count(&totalBots).Error; err != nil {
-		log.Printf("🔴 DB Error: %v", err)
+		log.Printf("DB Error: %v", err)
 		b.sendText(ctx, chatID, "❌ Database error")
 		return
 	}
-	log.Printf("🔵 showBotStatus: Total bots = %d", totalBots)
 
-	log.Printf("🔵 showBotStatus: Getting desired count...")
 	desiredCount := b.getDesiredBotCount()
-	log.Printf("🔵 showBotStatus: Desired count = %d", desiredCount)
 
-	log.Printf("🔵 showBotStatus: Checking if bot manager is running...")
+	// Check if bot manager is running
 	isRunning := false
-	if b.engine != nil {
-		log.Printf("🔵 showBotStatus: engine is not nil")
-		botManager := b.engine.GetBotManager()
-		if botManager != nil {
-			log.Printf("🔵 showBotStatus: botManager is not nil")
-			isRunning = true
-		} else {
-			log.Printf("🔵 showBotStatus: botManager is nil")
-		}
-	} else {
-		log.Printf("🔵 showBotStatus: engine is nil")
+	if b.engine != nil && b.engine.GetBotManager() != nil {
+		isRunning = true
 	}
 
 	statusEmoji := "✅"
@@ -107,17 +77,15 @@ func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 		statusEmoji = "⏹️"
 		statusText = "Stopped"
 	}
-	log.Printf("🔵 showBotStatus: Status = %s %s", statusEmoji, statusText)
 
-	log.Printf("🔵 showBotStatus: Building message...")
 	msg := telego.SendMessageParams{
 		ChatID: telego.ChatID{ID: chatID},
 		Text: fmt.Sprintf(
 			"🤖 *Bot Manager*\n\n"+
 				"📊 *Status:* %s %s\n"+
-				"👥 *Total Bots:* %d\n"+
+				"👥 *Current Bots:* %d\n"+
 				"🎯 *Target Count:* %d\n\n"+
-				"💡 Use /bots set <count> to change target",
+				"Select an option below:",
 			statusEmoji,
 			statusText,
 			totalBots,
@@ -126,6 +94,32 @@ func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 		ParseMode: "Markdown",
 		ReplyMarkup: &telego.InlineKeyboardMarkup{
 			InlineKeyboard: [][]telego.InlineKeyboardButton{
+				{
+					{
+						Text:         "➕ Add 5 Bots",
+						CallbackData: "bots_add_5",
+					},
+					{
+						Text:         "➖ Remove 5 Bots",
+						CallbackData: "bots_remove_5",
+					},
+				},
+				{
+					{
+						Text:         "➕ Add 10 Bots",
+						CallbackData: "bots_add_10",
+					},
+					{
+						Text:         "➖ Remove 10 Bots",
+						CallbackData: "bots_remove_10",
+					},
+				},
+				{
+					{
+						Text:         "🎯 Set Count",
+						CallbackData: "bots_set_prompt",
+					},
+				},
 				{
 					{
 						Text:         "🔄 Refresh",
@@ -142,29 +136,30 @@ func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 		},
 	}
 
-	log.Printf("🔵 showBotStatus: Sending message...")
 	b.sendMessage(ctx, &msg)
-	log.Printf("🔵 showBotStatus: COMPLETED SUCCESSFULLY")
 }
-// ✅ setBotCount - With debug logging
+
+// ✅ setBotCount - Set desired number of bots
 func (b *Bot) setBotCount(ctx context.Context, chatID int64, count int) {
-	log.Printf("🟡 setBotCount: count=%d", count)
-	
 	if b.engine == nil {
-		log.Printf("🔴 setBotCount: engine is nil")
 		b.sendText(ctx, chatID, "❌ Game engine not available.")
 		return
 	}
 
-	log.Printf("🟡 setBotCount: Getting bot manager...")
 	botManager := b.engine.GetBotManager()
 	if botManager == nil {
-		log.Printf("🔴 setBotCount: botManager is nil")
 		b.sendText(ctx, chatID, "❌ Bot manager not available.")
 		return
 	}
 
-	log.Printf("🟡 setBotCount: Setting desired count...")
+	// Validate count
+	if count < 1 {
+		count = 1
+	}
+	if count > 100 {
+		count = 100
+	}
+
 	botManager.SetDesiredCount(count)
 
 	b.logAdminAction(ctx, chatID, "set_bot_count", 0, "bots", fmt.Sprintf("Set desired bot count to %d", count))
@@ -174,52 +169,104 @@ func (b *Bot) setBotCount(ctx context.Context, chatID int64, count int) {
 		chatID,
 		fmt.Sprintf(
 			"✅ *Bot Count Updated*\n\n"+
-				"Target bot count per game set to: *%d*\n\n"+
+				"🎯 Target bot count per game set to: *%d*\n\n"+
 				"📊 Current bots: %d\n"+
 				"⚠️ Bots will automatically adjust to reach this target.",
 			count,
 			b.getCurrentBotCount(),
 		),
 	)
-	log.Printf("🟡 setBotCount: COMPLETED")
 }
 
-// ✅ getCurrentBotCount
+// ✅ addBots - Add a specific number of bots
+func (b *Bot) addBots(ctx context.Context, chatID int64, count int) {
+	if b.engine == nil {
+		b.sendText(ctx, chatID, "❌ Game engine not available.")
+		return
+	}
+
+	botManager := b.engine.GetBotManager()
+	if botManager == nil {
+		b.sendText(ctx, chatID, "❌ Bot manager not available.")
+		return
+	}
+
+	currentCount := b.getCurrentBotCount()
+	newCount := currentCount + count
+	if newCount > 100 {
+		newCount = 100
+		b.sendText(ctx, chatID, fmt.Sprintf("⚠️ Max bots is 100. Setting to 100."))
+	}
+
+	botManager.SetDesiredCount(newCount)
+
+	b.logAdminAction(ctx, chatID, "add_bots", 0, "bots", fmt.Sprintf("Added %d bots, new count: %d", count, newCount))
+
+	b.sendMarkdown(
+		ctx,
+		chatID,
+		fmt.Sprintf(
+			"➕ *Bots Added*\n\n"+
+				"Added *%d* bots.\n\n"+
+				"🎯 New target: *%d* bots\n"+
+				"📊 Current bots: %d",
+			count,
+			newCount,
+			b.getCurrentBotCount(),
+		),
+	)
+}
+
+// ✅ removeBots - Remove a specific number of bots
+func (b *Bot) removeBots(ctx context.Context, chatID int64, count int) {
+	if b.engine == nil {
+		b.sendText(ctx, chatID, "❌ Game engine not available.")
+		return
+	}
+
+	botManager := b.engine.GetBotManager()
+	if botManager == nil {
+		b.sendText(ctx, chatID, "❌ Bot manager not available.")
+		return
+	}
+
+	currentCount := b.getCurrentBotCount()
+	newCount := currentCount - count
+	if newCount < 1 {
+		newCount = 1
+		b.sendText(ctx, chatID, fmt.Sprintf("⚠️ Minimum bots is 1. Setting to 1."))
+	}
+
+	botManager.SetDesiredCount(newCount)
+
+	b.logAdminAction(ctx, chatID, "remove_bots", 0, "bots", fmt.Sprintf("Removed %d bots, new count: %d", count, newCount))
+
+	b.sendMarkdown(
+		ctx,
+		chatID,
+		fmt.Sprintf(
+			"➖ *Bots Removed*\n\n"+
+				"Removed *%d* bots.\n\n"+
+				"🎯 New target: *%d* bots\n"+
+				"📊 Current bots: %d",
+			count,
+			newCount,
+			b.getCurrentBotCount(),
+		),
+	)
+}
+
+// ✅ getCurrentBotCount - Get current bot count
 func (b *Bot) getCurrentBotCount() int {
 	var count int64
 	b.db.Model(&models.User{}).Where("is_bot = ?", true).Count(&count)
 	return int(count)
 }
 
-// ✅ getDesiredBotCount - With debug logging
-// adminbot/bot_manager.go - getDesiredBotCount with more checks
+// ✅ getDesiredBotCount - Get desired bot count
 func (b *Bot) getDesiredBotCount() int {
-    log.Printf("🟣 getDesiredBotCount: Called")
-    
-    defer func() {
-        if r := recover(); r != nil {
-            log.Printf("🔴 PANIC in getDesiredBotCount: %v", r)
-            log.Printf("🔴 Stack trace: %s", debug.Stack())
-        }
-    }()
-    
-    if b.engine != nil {
-        log.Printf("🟣 getDesiredBotCount: engine is not nil")
-        
-        botManager := b.engine.GetBotManager()
-        if botManager != nil {
-            log.Printf("🟣 getDesiredBotCount: botManager is not nil")
-            
-            // ✅ Call with recover
-            count := botManager.GetDesiredCount()
-            log.Printf("🟣 getDesiredBotCount: count = %d", count)
-            return count
-        }
-        log.Printf("🟣 getDesiredBotCount: botManager is nil")
-    } else {
-        log.Printf("🟣 getDesiredBotCount: engine is nil")
-    }
-    
-    log.Printf("🟣 getDesiredBotCount: Returning default: %d", defaultRobotSettings.DesiredCount)
-    return defaultRobotSettings.DesiredCount
+	if b.engine != nil && b.engine.GetBotManager() != nil {
+		return b.engine.GetBotManager().GetDesiredCount()
+	}
+	return defaultRobotSettings.DesiredCount
 }
