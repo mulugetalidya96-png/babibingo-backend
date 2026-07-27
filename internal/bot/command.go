@@ -378,13 +378,14 @@ func (b *Bot) handleInvite(
 		user.ID,
 	)
 
+	// ✅ Use backticks to preserve underscore (code formatting)
 	b.sendMarkdown(
 		ctx,
 		chatID,
 		fmt.Sprintf(
 			"🔗 *Your Invitation Link*\n\n"+
 				"Share this link with your friends!\n\n"+
-				"Link: %s",
+				"`%s`", // ← Backticks preserve the underscore
 			link,
 		),
 	)

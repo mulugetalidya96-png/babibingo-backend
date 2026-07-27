@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"time"
 
 	"babibingo/internal/models"
@@ -39,10 +41,26 @@ func (b *Bot) handlePhoneShare(
 	if cachedCode, ok := b.tempReferralCache.Load(chatID); ok {
 		referrerCode := cachedCode.(string)
 		var referrer models.User
-		if err := b.db.Where("referral_code = ?", referrerCode).First(&referrer).Error; err == nil {
-			referredBy = &referrer.ID
-			log.Printf("✅ User %d referred by agent %d", tgUser.ID, referrer.ID)
+		
+		// ✅ Handle both "ref_" prefix and plain referral codes
+		if strings.HasPrefix(referrerCode, "ref_") {
+			// Format: ref_7762372471
+			refStr := strings.TrimPrefix(referrerCode, "ref_")
+			if referrerTelegramID, err := strconv.ParseInt(refStr, 10, 64); err == nil {
+				// Find by Telegram ID
+				if err := b.db.Where("telegram_id = ?", referrerTelegramID).First(&referrer).Error; err == nil {
+					referredBy = &referrer.ID
+					log.Printf("✅ User %d referred by agent %d (from ref_ format)", tgUser.ID, referrer.ID)
+				}
+			}
+		} else {
+			// Legacy: find by referral code (e.g., "ABC123XYZ")
+			if err := b.db.Where("referral_code = ?", referrerCode).First(&referrer).Error; err == nil {
+				referredBy = &referrer.ID
+				log.Printf("✅ User %d referred by agent %d (from referral_code format)", tgUser.ID, referrer.ID)
+			}
 		}
+		
 		b.tempReferralCache.Delete(chatID) // Clean up
 	}
 
@@ -68,20 +86,25 @@ func (b *Bot) handlePhoneShare(
 		return
 	}
 
-	// ✅ If user was referred, notify the referrer (agent)
+	// ✅ If user was referred, notify the referrer
 	if referredBy != nil {
 		var referrer models.User
 		if err := b.db.First(&referrer, *referredBy).Error; err == nil {
-			b.sendMarkdown(
-				ctx,
-				referrer.TelegramID, // Send to agent
-				fmt.Sprintf(
-					"🎉 *New Referral!*\n\n"+
-						"User @%s has registered using your referral link!\n\n"+
-						"💳 When they play, you'll earn 1 ETB per card.",
-					tgUser.Username,
-				),
-			)
+			// ✅ Only notify if the referrer is an agent
+			if referrer.IsAgent {
+				b.sendMarkdown(
+					ctx,
+					referrer.TelegramID, // Send to agent
+					fmt.Sprintf(
+						"🎉 *New Agent Referral!*\n\n"+
+							"User @%s has registered using your invitation link!\n\n"+
+							"💰 You will earn 1 ETB commission for every card they play.",
+						tgUser.Username,
+					),
+				)
+			} else {
+				log.Printf("📨 User %d referred by non-agent %d (no commission)", tgUser.ID, *referredBy)
+			}
 		}
 	}
 
@@ -91,12 +114,7 @@ func (b *Bot) handlePhoneShare(
 		chatID,
 		fmt.Sprintf(
 			"✅ *Registration successful!*\n\n"+
-				"🎱 Welcome to BabiBingo!\n"+
-				"🔑 Your Referral Code: `%s`\n\n"+
-				"Share this code with friends to earn rewards!\n"+
-				"📤 /invite to share your referral link.\n"+
-				"📊 /referrals to track your referrals.",
-			referralCode,
+				"🎱 Welcome to BabiBingo!\n",
 		),
 	)
 
