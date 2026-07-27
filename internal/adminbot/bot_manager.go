@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"strconv"
 
 	"babibingo/internal/models"
@@ -191,23 +192,34 @@ func (b *Bot) getCurrentBotCount() int {
 }
 
 // ✅ getDesiredBotCount - With debug logging
+// adminbot/bot_manager.go - getDesiredBotCount with more checks
 func (b *Bot) getDesiredBotCount() int {
-	log.Printf("🟣 getDesiredBotCount: Called")
-	
-	if b.engine != nil {
-		log.Printf("🟣 getDesiredBotCount: engine is not nil")
-		botManager := b.engine.GetBotManager()
-		if botManager != nil {
-			log.Printf("🟣 getDesiredBotCount: botManager is not nil")
-			count := botManager.GetDesiredCount()
-			log.Printf("🟣 getDesiredBotCount: count = %d", count)
-			return count
-		}
-		log.Printf("🟣 getDesiredBotCount: botManager is nil")
-	} else {
-		log.Printf("🟣 getDesiredBotCount: engine is nil")
-	}
-	
-	log.Printf("🟣 getDesiredBotCount: Returning default: %d", defaultRobotSettings.DesiredCount)
-	return defaultRobotSettings.DesiredCount
+    log.Printf("🟣 getDesiredBotCount: Called")
+    
+    defer func() {
+        if r := recover(); r != nil {
+            log.Printf("🔴 PANIC in getDesiredBotCount: %v", r)
+            log.Printf("🔴 Stack trace: %s", debug.Stack())
+        }
+    }()
+    
+    if b.engine != nil {
+        log.Printf("🟣 getDesiredBotCount: engine is not nil")
+        
+        botManager := b.engine.GetBotManager()
+        if botManager != nil {
+            log.Printf("🟣 getDesiredBotCount: botManager is not nil")
+            
+            // ✅ Call with recover
+            count := botManager.GetDesiredCount()
+            log.Printf("🟣 getDesiredBotCount: count = %d", count)
+            return count
+        }
+        log.Printf("🟣 getDesiredBotCount: botManager is nil")
+    } else {
+        log.Printf("🟣 getDesiredBotCount: engine is nil")
+    }
+    
+    log.Printf("🟣 getDesiredBotCount: Returning default: %d", defaultRobotSettings.DesiredCount)
+    return defaultRobotSettings.DesiredCount
 }
