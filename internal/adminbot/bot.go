@@ -268,10 +268,3 @@ func (b *Bot) updateBotSettings(settings BotSettings) {
 	b.botSettings = settings
 }
 
-// ✅ BotSettings structure
-type BotSettings struct {
-	DesiredCount int
-	Speed        int
-	MaxBots      int
-	AutoApprove  bool
-}
