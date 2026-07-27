@@ -54,10 +54,30 @@ func (bm *BotManager) SetDesiredCount(count int) {
 }
 
 // ✅ GetDesiredCount returns the desired number of bots per game
+// game/bots.go - Add debug logging to GetDesiredCount
 func (bm *BotManager) GetDesiredCount() int {
-	bm.mu.RLock()
-	defer bm.mu.RUnlock()
-	return bm.desiredCount
+    log.Println("🟣🟣 GetDesiredCount: Called on BotManager")
+    
+    // ✅ Check if bm is nil
+    if bm == nil {
+        log.Println("🔴🟣 GetDesiredCount: bm is nil!")
+        return 20
+    }
+    log.Println("🟣🟣 GetDesiredCount: bm is not nil")
+    
+    // ✅ Check if mu is locked
+    log.Println("🟣🟣 GetDesiredCount: Attempting RLock...")
+    bm.mu.RLock()
+    log.Println("🟣🟣 GetDesiredCount: RLock acquired")
+    
+    defer func() {
+        log.Println("🟣🟣 GetDesiredCount: Unlocking...")
+        bm.mu.RUnlock()
+        log.Println("🟣🟣 GetDesiredCount: Unlocked")
+    }()
+    
+    log.Printf("🟣🟣 GetDesiredCount: Count = %d", bm.desiredCount)
+    return bm.desiredCount
 }
 
 // ✅ Get or create bot users
