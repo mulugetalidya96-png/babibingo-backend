@@ -372,20 +372,19 @@ func (b *Bot) handleInvite(
 		return
 	}
 
-	// ✅ Bot username: babibingo_bot (with underscore)
+	// ✅ Escape the underscore with backslash
 	link := fmt.Sprintf(
-		"https://t.me/babibingo_bot?start=ref_%d",
+		"https://t.me/babibingo\\_bot?start=ref\\_%d",
 		user.ID,
 	)
 
-	// ✅ Use backticks to preserve underscore (code formatting)
 	b.sendMarkdown(
 		ctx,
 		chatID,
 		fmt.Sprintf(
 			"🔗 *Your Invitation Link*\n\n"+
 				"Share this link with your friends!\n\n"+
-				"`%s`", // ← Backticks preserve the underscore
+				"%s",
 			link,
 		),
 	)
