@@ -1,6 +1,10 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strconv"
+	"strings"
+)
 
 type Config struct {
 	DatabaseURL  string
@@ -12,6 +16,12 @@ type Config struct {
 	Bot          BotConfig `json:"bot"`
 	VerifyAPIKey string    `env:"VERIFY_API_KEY" default:""`
 	BabiBingoPhone string `env:"BABIBINGO_PHONE" default:"0940072277"` // ✅ Add this too
+	AdminBotToken   string `env:"ADMIN_BOT_TOKEN" default:""`
+    AdminIDs        string `env:"ADMIN_IDS" default:""`
+    AutoApprove     bool   `env:"AUTO_APPROVE" default:"false"`
+    NotifyOnApply   bool   `env:"NOTIFY_ON_APPLY" default:"true"`
+    NotifyOnDeposit bool   `env:"NOTIFY_ON_DEPOSIT" default:"true"`
+    NotifyOnWithdraw bool  `env:"NOTIFY_ON_WITHDRAW" default:"true"`
 }
 
 type BotConfig struct {
@@ -32,6 +42,12 @@ func Load() *Config {
 		JWTSecret:      getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
 		VerifyAPIKey:   getEnv("VERIFY_API_KEY", ""), // ✅ Add this
 		BabiBingoPhone: getEnv("BABIBINGO_PHONE", "0940072277"), // ✅ Add this
+		AdminBotToken:   getEnv("ADMIN_BOT_TOKEN", ""),
+        AdminIDs:        getEnv("ADMIN_IDS", ""),
+        AutoApprove:     getEnv("AUTO_APPROVE", "false") == "true",
+        NotifyOnApply:   getEnv("NOTIFY_ON_APPLY", "true") == "true",
+        NotifyOnDeposit: getEnv("NOTIFY_ON_DEPOSIT", "true") == "true",
+        NotifyOnWithdraw: getEnv("NOTIFY_ON_WITHDRAW", "true") == "true",
 	}
 }
 
@@ -40,4 +56,17 @@ func getEnv(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+func (c *Config) GetAdminIDs() []int64 {
+    if c.AdminIDs == "" {
+        return []int64{}
+    }
+    
+    var ids []int64
+    for _, part := range strings.Split(c.AdminIDs, ",") {
+        if id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64); err == nil {
+            ids = append(ids, id)
+        }
+    }
+    return ids
 }

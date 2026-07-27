@@ -1,6 +1,7 @@
 package main
 
 import (
+	"babibingo/internal/adminbot"
 	"babibingo/internal/agentbot" // ✅ Import agentbot
 	"babibingo/internal/api"
 	"babibingo/internal/bot"
@@ -80,6 +81,28 @@ func main() {
 	} else {
 		log.Println("⚠️ TELEGRAM_BOT_TOKEN not set, main bot disabled")
 	}
+	// ✅ Initialize Admin Bot
+    if cfg.AdminBotToken != "" && len(cfg.GetAdminIDs()) > 0 {
+        adminBot, err := adminbot.New(cfg.AdminBotToken, db, cfg)
+        if err != nil {
+            log.Printf("Failed to initialize admin bot: %v", err)
+        } else {
+            go func() {
+                ctx := context.Background()
+                if err := adminBot.Start(ctx); err != nil {
+                    log.Printf("Admin bot stopped: %v", err)
+                }
+            }()
+            log.Printf("✅ Admin Bot started with %d admins", len(cfg.GetAdminIDs()))
+        }
+    } else {
+        if cfg.AdminBotToken == "" {
+            log.Println("⚠️ ADMIN_BOT_TOKEN not set, admin bot disabled")
+        }
+        if len(cfg.GetAdminIDs()) == 0 {
+            log.Println("⚠️ ADMIN_IDS not set, admin bot disabled")
+        }
+    }
 
 	// Setup HTTP server
 	router := gin.Default()
