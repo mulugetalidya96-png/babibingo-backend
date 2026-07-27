@@ -10,6 +10,7 @@ import (
 )
 
 // ReserveCard reserves a card for a user
+// ReserveCard reserves a card for a user
 func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	log.Printf("🔵 ReserveCard: telegram_id=%d, card=%d", telegramID, cardNumber)
 
@@ -28,11 +29,12 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	// Get user by Telegram ID
 	user, err := e.getUserByTelegramID(telegramID)
 	if err != nil {
-		return err
+		return fmt.Errorf("user not found: %w", err)
 	}
 
+	// ✅ Check balance with detailed message
 	if user.Balance < StakeAmount {
-		return fmt.Errorf("insufficient balance")
+		return fmt.Errorf("insufficient balance: need %.2f ETB, have %.2f ETB", StakeAmount, user.Balance)
 	}
 
 	// Check reservation
@@ -40,11 +42,11 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 		if reservedBy == telegramID {
 			return fmt.Errorf("card already reserved by you")
 		}
-		return fmt.Errorf("card already reserved")
+		return fmt.Errorf("card already reserved by another player")
 	}
 
 	if len(state.UserCards[telegramID]) >= MaxCardsPerPlayer {
-		return fmt.Errorf("maximum %d cards allowed", MaxCardsPerPlayer)
+		return fmt.Errorf("maximum %d cards allowed per player", MaxCardsPerPlayer)
 	}
 
 	// Reserve in memory
@@ -56,14 +58,14 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	cardData, found := GetCardByID(cardNumber)
 	if !found {
 		e.rollbackReservation(state, telegramID, cardNumber)
-		return fmt.Errorf("card not found")
+		return fmt.Errorf("card data not found")
 	}
 
 	// Create card record
 	card := models.Card{
 		ID:            uuid.New(),
 		GameID:        state.Game.ID,
-		UserID:        user.ID, // Use primary key
+		UserID:        user.ID,
 		CardNumber:    cardNumber,
 		CardData:      cardData,
 		MarkedNumbers: pq.Int64Array{},
@@ -98,8 +100,9 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	return nil
 }
 
-// rollbackReservation rolls back a reservation
+// ✅ rollbackReservation - Rollback reservation on error
 func (e *Engine) rollbackReservation(state *GameState, telegramID int64, cardNumber int) {
+	log.Printf("🔴 Rolling back reservation for user %d, card %d", telegramID, cardNumber)
 	delete(state.ReservedCards, cardNumber)
 	userCards := state.UserCards[telegramID]
 	for i, num := range userCards {
@@ -110,6 +113,8 @@ func (e *Engine) rollbackReservation(state *GameState, telegramID int64, cardNum
 	}
 	e.UpdatePool(state)
 }
+
+
 
 // CancelReservation cancels a card reservation
 func (e *Engine) CancelReservation(telegramID int64, cardNumber int) error {
