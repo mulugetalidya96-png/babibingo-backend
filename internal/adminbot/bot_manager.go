@@ -53,6 +53,7 @@ func (b *Bot) handleBots(ctx context.Context, chatID int64, args []string) {
 }
 
 // ✅ showBotStatus - With extensive debug logging
+// ✅ showBotStatus - With db nil check
 func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 	log.Printf("🔵 showBotStatus: STARTED")
 	
@@ -62,6 +63,14 @@ func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 			b.sendText(ctx, chatID, fmt.Sprintf("❌ Error loading status: %v", r))
 		}
 	}()
+
+	// ✅ CHECK: Is db nil?
+	if b.db == nil {
+		log.Printf("🔴 CRITICAL: b.db is nil!")
+		b.sendText(ctx, chatID, "❌ Database connection error")
+		return
+	}
+	log.Printf("🔵 showBotStatus: db is not nil")
 
 	log.Printf("🔵 showBotStatus: Getting total bots from DB...")
 	var totalBots int64
@@ -136,7 +145,6 @@ func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 	b.sendMessage(ctx, &msg)
 	log.Printf("🔵 showBotStatus: COMPLETED SUCCESSFULLY")
 }
-
 // ✅ setBotCount - With debug logging
 func (b *Bot) setBotCount(ctx context.Context, chatID int64, count int) {
 	log.Printf("🟡 setBotCount: count=%d", count)
