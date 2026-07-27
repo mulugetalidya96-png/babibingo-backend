@@ -30,6 +30,7 @@ type BotStats struct {
 	TodayReserved      int
 	NewBotsToday       int
 	TotalBotsCreated   int
+	DesiredCount       int // ✅ New: desired bot count per game
 }
 
 // handleBots - Main bot handler
@@ -78,8 +79,7 @@ func (b *Bot) handleBots(ctx context.Context, chatID int64, args []string) {
 	}
 }
 
-// ✅ getBotStats - Get real bot stats from database
-// ✅ getBotStats - Use GetGameState instead
+// ✅ getBotStats - Get real bot stats from database and game engine
 func (b *Bot) getBotStats() BotStats {
 	stats := BotStats{}
 
@@ -145,23 +145,22 @@ func (b *Bot) getBotStats() BotStats {
 		).
 		Select("COALESCE(SUM(amount), 0)").Scan(&stats.TotalWon)
 
-	// ✅ Active in game - use GetGameState
+	// ✅ Get desired count from bot manager
+	if b.engine != nil && b.engine.GetBotManager() != nil {
+		stats.DesiredCount = b.engine.GetBotManager().GetDesiredCount()
+	}
+
+	// ✅ Active in game
 	if b.engine != nil {
-		// Check if there's an active game by getting game state
-		state, err := b.engine.GetGameState(0) // 0 means no specific user
-		if err == nil && state != nil {
-			// Get the current game state from the engine
-			currentGame, _, _, _, _, _, err := b.engine.GetCurrentGame()
-			if err == nil && currentGame != nil {
-				// Count active bots in the game
-				var botPlayers int64
-				b.db.Model(&models.GamePlayer{}).
-					Where("game_id = ? AND user_id IN (?)", currentGame.ID,
-						b.db.Table("users").Select("id").Where("is_bot = ?", true),
-					).
-					Count(&botPlayers)
-				stats.ActiveInGame = int(botPlayers)
-			}
+		currentGame, _, _, _, _, _, err := b.engine.GetCurrentGame()
+		if err == nil && currentGame != nil {
+			var botPlayers int64
+			b.db.Model(&models.GamePlayer{}).
+				Where("game_id = ? AND user_id IN (?)", currentGame.ID,
+					b.db.Table("users").Select("id").Where("is_bot = ?", true),
+				).
+				Count(&botPlayers)
+			stats.ActiveInGame = int(botPlayers)
 		}
 	}
 
@@ -172,6 +171,7 @@ func (b *Bot) getBotStats() BotStats {
 
 	return stats
 }
+
 // ✅ showBotStatus - Show real bot status with count controls
 func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 	stats := b.getBotStats()
@@ -181,14 +181,6 @@ func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 	if !stats.IsRunning {
 		statusEmoji = "⏹️"
 		statusText = "Stopped"
-	}
-
-	// Get current bot settings from engine
-	currentCount := stats.TotalBots
-	if b.engine != nil && b.engine.GetBotManager() != nil {
-		// Get the desired count from settings
-		settings := b.getBotSettings()
-		currentCount = settings.DesiredCount
 	}
 
 	msg := telego.SendMessageParams{
@@ -214,7 +206,7 @@ func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 			statusEmoji,
 			statusText,
 			stats.TotalBots,
-			currentCount,
+			stats.DesiredCount,
 			stats.ActiveBots,
 			stats.TotalBots-stats.ActiveBots,
 			stats.CardsReserved,
@@ -272,25 +264,39 @@ func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 	b.sendMessage(ctx, &msg)
 }
 
-// ✅ setBotCount - Set desired number of bots
+// ✅ setBotCount - Set desired number of bots per game
 func (b *Bot) setBotCount(ctx context.Context, chatID int64, count int) {
-	if count < 0 || count > 400 {
-		b.sendText(ctx, chatID, "❌ Bot count must be between 0 and 400.")
+	if count < 0 || count > 100 {
+		b.sendText(ctx, chatID, "❌ Bot count must be between 0 and 100.")
 		return
 	}
 
-	// Save to settings
-	b.saveBotCount(count)
+	if b.engine == nil {
+		b.sendText(ctx, chatID, "❌ Game engine not available.")
+		return
+	}
+
+	botManager := b.engine.GetBotManager()
+	if botManager == nil {
+		b.sendText(ctx, chatID, "❌ Bot manager not available.")
+		return
+	}
+
+	// ✅ Set the desired count in the bot manager
+	botManager.SetDesiredCount(count)
+
+	// Update local settings
+	b.botSettings.DesiredCount = count
 
 	// Log action
-	b.logAdminAction(ctx, chatID, "set_bot_count", 0, "bots", fmt.Sprintf("Set bot count to %d", count))
+	b.logAdminAction(ctx, chatID, "set_bot_count", 0, "bots", fmt.Sprintf("Set desired bot count to %d", count))
 
 	b.sendMarkdown(
 		ctx,
 		chatID,
 		fmt.Sprintf(
 			"🎯 *Bot Count Updated*\n\n"+
-				"Target bot count set to: *%d*\n\n"+
+				"Desired bot count per game set to: *%d*\n\n"+
 				"📊 Current bots: %d\n"+
 				"📈 Bots to add/remove: %d\n\n"+
 				"⚠️ Bots will automatically adjust to reach this target.",
@@ -398,7 +404,7 @@ func (b *Bot) showBotCount(ctx context.Context, chatID int64) {
 				"• Cards Reserved: %d\n"+
 				"• New Bots: %d",
 			stats.TotalBots,
-			b.getDesiredBotCount(),
+			stats.DesiredCount,
 			stats.ActiveInGame,
 			stats.TotalBots-stats.ActiveInGame,
 			stats.CardsReserved,
@@ -424,15 +430,10 @@ func (b *Bot) getBotCardCount() int {
 }
 
 func (b *Bot) getDesiredBotCount() int {
-	// Get from settings
-	settings := b.getBotSettings()
-	return settings.DesiredCount
-}
-
-func (b *Bot) saveBotCount(count int) {
-	// TODO: Save to database settings
-	// For now, just store in memory
-	b.botSettings.DesiredCount = count
+	if b.engine != nil && b.engine.GetBotManager() != nil {
+		return b.engine.GetBotManager().GetDesiredCount()
+	}
+	return b.botSettings.DesiredCount
 }
 
 // ✅ BotSettings structure
@@ -448,11 +449,6 @@ var defaultBotSettings = BotSettings{
 	Speed:        2,
 	MaxBots:      50,
 }
-
-
-
-// ✅ Add to Bot struct in bot.go
-// botSettings BotSettings
 
 // ✅ startBots - Start bot routine
 func (b *Bot) startBots(ctx context.Context, chatID int64) {
@@ -480,13 +476,13 @@ func (b *Bot) startBots(ctx context.Context, chatID int64) {
 	b.logAdminAction(ctx, chatID, "start_bots", 0, "bots", "Started bot routine")
 
 	b.sendMarkdown(ctx, chatID, fmt.Sprintf(
-	"✅ *Bots Started*\n\n"+
-		"🤖 Bot routine has been started.\n\n"+
-		"📊 Bots will now automatically reserve cards.\n"+
-		"🎯 Target bot count: %d\n"+
-		"Use /bots status to monitor.",
-	b.getDesiredBotCount(),
-))
+		"✅ *Bots Started*\n\n"+
+			"🤖 Bot routine has been started.\n\n"+
+			"📊 Bots will now automatically reserve cards.\n"+
+			"🎯 Target bot count: %d\n"+
+			"Use /bots status to monitor.",
+		b.getDesiredBotCount(),
+	))
 }
 
 // ✅ stopBots - Stop bot routine
@@ -645,12 +641,11 @@ func (b *Bot) showDetailedBotStats(ctx context.Context, chatID int64) {
 	)
 }
 
-// ✅ getUptime - Get bot uptime
-// bot_manager.go - Add this function
+
 
 // ✅ showBotSettings - Show bot settings
 func (b *Bot) showBotSettings(ctx context.Context, chatID int64) {
-	settings := b.getBotSettings()
+	desiredCount := b.getDesiredBotCount()
 
 	msg := telego.SendMessageParams{
 		ChatID: telego.ChatID{ID: chatID},
@@ -658,19 +653,23 @@ func (b *Bot) showBotSettings(ctx context.Context, chatID int64) {
 			"⚙️ *Bot Settings*\n\n"+
 				"🤖 *General:*\n"+
 				"• Status: %s\n"+
-				"• Target Count: %d bots\n"+
+				"• Target Count: *%d* bots\n"+
 				"• Speed: %d bots/tick\n"+
 				"• Max Bots: %d\n"+
 				"• Interval: 3s\n\n"+
-				"🎯 *Limits:*\n"+
-				"• Max Players: 400\n\n"+
-				"💡 Use /bots speed <n> to change speed\n"+
-				"💡 Use /bots max <n> to change max bots\n"+
-				"💡 Use /bots set <n> to set target count",
+				"📊 *Current:*\n"+
+				"• Active Bots: %d\n"+
+				"• Total Bots: %d\n\n"+
+				"💡 *Commands:*\n"+
+				"/bots set <count> - Set target bot count\n"+
+				"/bots speed <n> - Change speed (1-10)\n"+
+				"/bots max <n> - Change max bots (5-100)",
 			b.getBotStatusText(),
-			settings.DesiredCount,
-			settings.Speed,
-			settings.MaxBots,
+			desiredCount,
+			b.botSettings.Speed,
+			b.botSettings.MaxBots,
+			b.getCurrentBotCount(),
+			b.getTotalBotCount(),
 		),
 		ParseMode: "Markdown",
 		ReplyMarkup: &telego.InlineKeyboardMarkup{
@@ -686,6 +685,9 @@ func (b *Bot) showBotSettings(ctx context.Context, chatID int64) {
 				{
 					{Text: "➕ Add 5 Bots", CallbackData: "bots_add_5"},
 					{Text: "➖ Remove 5 Bots", CallbackData: "bots_remove_5"},
+				},
+				{
+					{Text: "🎯 Set Count", CallbackData: "bots_set_count"},
 				},
 				{
 					{Text: "🔙 Back", CallbackData: "bots_back"},
@@ -704,3 +706,12 @@ func (b *Bot) getBotStatusText() string {
 	}
 	return "⏹️ Stopped"
 }
+
+// ✅ getTotalBotCount - Helper to get total bot count
+func (b *Bot) getTotalBotCount() int {
+	var count int64
+	b.db.Model(&models.User{}).Where("is_bot = ?", true).Count(&count)
+	return int(count)
+}
+
+// ✅ getBotSettings - Get current bot settings
