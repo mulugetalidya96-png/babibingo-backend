@@ -250,13 +250,6 @@ func (b *Bot) sendUnauthorized(ctx context.Context, chatID int64) {
 	)
 }
 
-// ✅ Get uptime
-func (b *Bot) getUptime() string {
-	duration := time.Since(b.startTime)
-	hours := int(duration.Hours())
-	minutes := int(duration.Minutes()) % 60
-	return fmt.Sprintf("%dh %dm", hours, minutes)
-}
 
 // ✅ Get bot settings
 func (b *Bot) getBotSettings() BotSettings {
@@ -268,3 +261,9 @@ func (b *Bot) updateBotSettings(settings BotSettings) {
 	b.botSettings = settings
 }
 
+func (b *Bot) getUptime() string {
+	duration := time.Since(b.startTime)
+	hours := int(duration.Hours())
+	minutes := int(duration.Minutes()) % 60
+	return fmt.Sprintf("%dh %dm", hours, minutes)
+}
