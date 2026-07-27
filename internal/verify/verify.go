@@ -19,10 +19,11 @@ type VerifyClient struct {
 type VerifyRequest struct {
 	Bank              string `json:"bank"`
 	TransactionNumber string `json:"transactionNumber,omitempty"`
-	ReferenceNumber   string `json:"referenceNumber,omitempty"`   // For CBE Birr
-	AccountSuffix     string `json:"accountSuffix,omitempty"`     // For CBE Birr
-	PhoneNumber       string `json:"phoneNumber,omitempty"`       // For CBE Birr
-	SettlementAccount string `json:"settlementAccount,omitempty"` // For Telebirr
+	ReferenceNumber   string `json:"referenceNumber,omitempty"`
+	ReceiptNumber     string `json:"receiptNumber,omitempty"`     // ✅ Added for CBE Birr
+	AccountSuffix     string `json:"accountSuffix,omitempty"`
+	PhoneNumber       string `json:"phoneNumber,omitempty"`
+	SettlementAccount string `json:"settlementAccount,omitempty"`
 }
 
 // ✅ Unified response format
@@ -41,6 +42,7 @@ type VerifyResponse struct {
 		ReceiverAccount   string  `json:"receiverAccount"`
 		TransactionNumber string  `json:"transactionNumber"`
 		ReferenceNumber   string  `json:"referenceNumber"`
+		ReceiptNumber     string  `json:"receiptNumber"`
 		AccountSuffix     string  `json:"accountSuffix"`
 		Timestamp         string  `json:"timestamp"`
 		SettlementAccountMatch struct {
@@ -79,16 +81,15 @@ func (c *VerifyClient) VerifyTeleBirrTransaction(txnID string, amount float64, r
 	return c.doVerify(reqBody, txnID)
 }
 
-// internal/verify/verify.go - Fix CBE Birr verification
-
 // ✅ VerifyCBEBirrTransaction - Verify CBE Birr transaction
-func (c *VerifyClient) VerifyCBEBirrTransaction(referenceNumber string, phoneNumber string, amount float64) (*VerifyResponse, error) {
+// Uses receiptNumber (which is the transaction ID) + phoneNumber
+func (c *VerifyClient) VerifyCBEBirrTransaction(receiptNumber string, phoneNumber string, amount float64) (*VerifyResponse, error) {
 	reqBody := VerifyRequest{
 		Bank:          "cbebirr",
-		ReferenceNumber: referenceNumber,
+		ReceiptNumber: receiptNumber, // ✅ Use receiptNumber instead of referenceNumber
 		PhoneNumber:   phoneNumber,
 	}
-	return c.doVerify(reqBody, referenceNumber)
+	return c.doVerify(reqBody, receiptNumber)
 }
 
 // ✅ Unified verify method

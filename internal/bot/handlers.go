@@ -291,8 +291,8 @@ func (b *Bot) handleCBEBirrSMS(
 	// 7️⃣ Call verify.et API for CBE Birr
 	verifyClient := verify.NewVerifyClient(b.cfg.VerifyAPIKey)
 	verifyResp, err := verifyClient.VerifyCBEBirrTransaction(
-		txnInfo.ReferenceNumber,
-		txnInfo.PhoneNumber, // ✅ Phone number is required
+		txnInfo.TransactionID, // ✅ Use TransactionID as receiptNumber
+		txnInfo.PhoneNumber,
 		txnInfo.Amount,
 	)
 	if err != nil {
