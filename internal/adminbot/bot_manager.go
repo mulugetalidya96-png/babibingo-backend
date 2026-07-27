@@ -42,8 +42,12 @@ func (b *Bot) handleBots(ctx context.Context, chatID int64, args []string) {
 		}
 	case "status":
 		b.showBotStatus(ctx, chatID)
+	case "start":
+		b.startBots(ctx, chatID)
+	case "stop":
+		b.stopBots(ctx, chatID)
 	default:
-		b.sendText(ctx, chatID, "❌ Usage: /bots set <count>  or  /bots status")
+		b.sendText(ctx, chatID, "❌ Usage: /bots [set <count>|status|start|stop]")
 	}
 }
 
@@ -63,10 +67,7 @@ func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 	desiredCount := b.getDesiredBotCount()
 
 	// Check if bot manager is running
-	isRunning := false
-	if b.engine != nil && b.engine.GetBotManager() != nil {
-		isRunning = true
-	}
+	isRunning := b.isBotRunning()
 
 	statusEmoji := "✅"
 	statusText := "Running"
@@ -82,7 +83,10 @@ func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 				"📊 *Status:* %s %s\n"+
 				"👥 *Total Bots:* %d\n"+
 				"🎯 *Target Count:* %d\n\n"+
-				"💡 Use /bots set <count> to change target",
+				"💡 Commands:\n"+
+				"/bots set <count> - Set target count\n"+
+				"/bots start - Start bots\n"+
+				"/bots stop - Stop bots",
 			statusEmoji,
 			statusText,
 			totalBots,
@@ -123,10 +127,8 @@ func (b *Bot) setBotCount(ctx context.Context, chatID int64, count int) {
 		return
 	}
 
-	// ✅ Set the desired count in the bot manager
 	botManager.SetDesiredCount(count)
 
-	// Log action
 	b.logAdminAction(ctx, chatID, "set_bot_count", 0, "bots", fmt.Sprintf("Set desired bot count to %d", count))
 
 	b.sendMarkdown(
@@ -135,12 +137,69 @@ func (b *Bot) setBotCount(ctx context.Context, chatID int64, count int) {
 		fmt.Sprintf(
 			"✅ *Bot Count Updated*\n\n"+
 				"Target bot count per game set to: *%d*\n\n"+
-				"📊 Current bots: %d\n"+
-				"⚠️ Bots will automatically adjust to reach this target.",
+				"📊 Current bots: %d",
 			count,
 			b.getCurrentBotCount(),
 		),
 	)
+}
+
+// ✅ startBots - Start bot routine
+func (b *Bot) startBots(ctx context.Context, chatID int64) {
+	if b.engine == nil {
+		b.sendText(ctx, chatID, "❌ Game engine not available.")
+		return
+	}
+
+	botManager := b.engine.GetBotManager()
+	if botManager == nil {
+		b.sendText(ctx, chatID, "❌ Bot manager not available.")
+		return
+	}
+
+	if b.isBotRunning() {
+		b.sendMarkdown(ctx, chatID, "⚠️ *Bots Already Running*")
+		return
+	}
+
+	botManager.StartBotRoutine()
+	b.logAdminAction(ctx, chatID, "start_bots", 0, "bots", "Started bot routine")
+	b.sendMarkdown(ctx, chatID, "✅ *Bots Started*")
+}
+
+// ✅ stopBots - Stop bot routine
+func (b *Bot) stopBots(ctx context.Context, chatID int64) {
+	if b.engine == nil {
+		b.sendText(ctx, chatID, "❌ Game engine not available.")
+		return
+	}
+
+	botManager := b.engine.GetBotManager()
+	if botManager == nil {
+		b.sendText(ctx, chatID, "❌ Bot manager not available.")
+		return
+	}
+
+	if !b.isBotRunning() {
+		b.sendMarkdown(ctx, chatID, "⚠️ *Bots Already Stopped*")
+		return
+	}
+
+	botManager.StopBotRoutine()
+	b.logAdminAction(ctx, chatID, "stop_bots", 0, "bots", "Stopped bot routine")
+	b.sendMarkdown(ctx, chatID, "⏹️ *Bots Stopped*")
+}
+
+// ✅ isBotRunning - Check if bot routine is running
+func (b *Bot) isBotRunning() bool {
+	if b.engine == nil {
+		return false
+	}
+	botManager := b.engine.GetBotManager()
+	if botManager == nil {
+		return false
+	}
+	return true
 }
 
 // ✅ getCurrentBotCount - Helper to get current bot count
@@ -160,7 +219,7 @@ func (b *Bot) getDesiredBotCount() int {
 
 // ✅ getBotStatusText - Get bot status text
 func (b *Bot) getBotStatusText() string {
-	if b.engine != nil && b.engine.GetBotManager() != nil {
+	if b.isBotRunning() {
 		return "✅ Running"
 	}
 	return "⏹️ Stopped"
