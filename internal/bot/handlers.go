@@ -35,6 +35,11 @@ func (b *Bot) handleMessage(ctx context.Context, msg *telego.Message) {
 		b.handleCommand(ctx, chatID, user, text)
 		return
 	}
+	// ✅ Check if user is in withdrawal amount input state
+	if state, ok := b.tempState.Load(chatID); ok && state == "awaiting_withdraw_amount" {
+		b.handleWithdrawAmount(ctx, chatID, user, text)
+		return
+	}
 
 	// ✅ Check if it's a Telebirr SMS
 	if sms.IsTelebirrSMS(text) {

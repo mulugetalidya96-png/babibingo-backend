@@ -45,7 +45,7 @@ func (b *Bot) handleCommand(
         b.handleDeposit(ctx, chatID)
 
     case "withdraw":
-        b.handleWithdraw(ctx, chatID)
+        b.handleWithdraw(ctx, chatID,user)
 
     case "agent":
         b.handleAgent(ctx, chatID, user)
