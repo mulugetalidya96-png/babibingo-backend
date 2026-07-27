@@ -10,7 +10,6 @@ import (
 )
 
 // ReserveCard reserves a card for a user
-// ReserveCard reserves a card for a user
 func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	log.Printf("🔵 ReserveCard: telegram_id=%d, card=%d", telegramID, cardNumber)
 
@@ -32,7 +31,7 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 		return fmt.Errorf("user not found: %w", err)
 	}
 
-	// ✅ Check balance with detailed message
+	// Check balance
 	if user.Balance < StakeAmount {
 		return fmt.Errorf("insufficient balance: need %.2f ETB, have %.2f ETB", StakeAmount, user.Balance)
 	}
@@ -57,7 +56,8 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	// Get card data
 	cardData, found := GetCardByID(cardNumber)
 	if !found {
-		e.rollbackReservation(state, telegramID, cardNumber)
+		// ✅ Rollback using the internal rollback (no lock)
+		e.rollbackReservationLocked(state, telegramID, cardNumber)
 		return fmt.Errorf("card data not found")
 	}
 
@@ -74,11 +74,12 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	}
 
 	if err := e.db.Create(&card).Error; err != nil {
-		e.rollbackReservation(state, telegramID, cardNumber)
+		// ✅ Rollback using the internal rollback (no lock)
+		e.rollbackReservationLocked(state, telegramID, cardNumber)
 		return fmt.Errorf("failed saving card: %w", err)
 	}
 
-	// Broadcast
+	// Broadcast success
 	grossPool := state.Game.TotalPool
 	netPool, houseCut := GetPoolBreakdown(grossPool)
 
@@ -100,8 +101,8 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	return nil
 }
 
-// ✅ rollbackReservation - Rollback reservation on error
-func (e *Engine) rollbackReservation(state *GameState, telegramID int64, cardNumber int) {
+// ✅ Internal rollback - assumes lock is already held
+func (e *Engine) rollbackReservationLocked(state *GameState, telegramID int64, cardNumber int) {
 	log.Printf("🔴 Rolling back reservation for user %d, card %d", telegramID, cardNumber)
 	delete(state.ReservedCards, cardNumber)
 	userCards := state.UserCards[telegramID]
@@ -114,7 +115,15 @@ func (e *Engine) rollbackReservation(state *GameState, telegramID int64, cardNum
 	e.UpdatePool(state)
 }
 
-
+// ✅ rollbackReservation - Public version (acquires lock)
+func (e *Engine) rollbackReservation(state *GameState, telegramID int64, cardNumber int) {
+	if state == nil {
+		return
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	e.rollbackReservationLocked(state, telegramID, cardNumber)
+}
 
 // CancelReservation cancels a card reservation
 func (e *Engine) CancelReservation(telegramID int64, cardNumber int) error {
