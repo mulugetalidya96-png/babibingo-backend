@@ -5,6 +5,7 @@ import (
 	"log"
 	"math/rand"
 	"sync"
+	"sync/atomic" // ✅ IMPORTANT: Add this
 	"time"
 
 	"babibingo/internal/models"
@@ -15,12 +16,12 @@ import (
 
 // BotManager manages bot players
 type BotManager struct {
-	engine        *Engine
-	bots          []*Bot
-	mu            sync.RWMutex
-	isRunning     bool
-	stopChan      chan bool
-	desiredCount  int // ✅ Desired number of bots per game
+	engine       *Engine
+	bots         []*Bot
+	mu           sync.RWMutex
+	isRunning    bool
+	stopChan     chan bool
+	desiredCount int32 // ✅ Changed to int32 for atomic operations
 }
 
 // Bot represents a simulated player
@@ -39,45 +40,24 @@ func NewBotManager(engine *Engine) *BotManager {
 	}
 }
 
-// ✅ SetDesiredCount sets the desired number of bots per game
+// ✅ SetDesiredCount sets the desired number of bots per game (ATOMIC)
 func (bm *BotManager) SetDesiredCount(count int) {
-	bm.mu.Lock()
-	defer bm.mu.Unlock()
 	if count < 0 {
 		count = 0
 	}
 	if count > 100 {
 		count = 100
 	}
-	bm.desiredCount = count
+	atomic.StoreInt32(&bm.desiredCount, int32(count))
 	log.Printf("🤖 Desired bot count set to: %d", count)
 }
 
-// ✅ GetDesiredCount returns the desired number of bots per game
-// game/bots.go - Add debug logging to GetDesiredCount
+// ✅ GetDesiredCount returns the desired number of bots per game (ATOMIC - NO MUTEX)
 func (bm *BotManager) GetDesiredCount() int {
-    log.Println("🟣🟣 GetDesiredCount: Called on BotManager")
-    
-    // ✅ Check if bm is nil
-    if bm == nil {
-        log.Println("🔴🟣 GetDesiredCount: bm is nil!")
-        return 20
-    }
-    log.Println("🟣🟣 GetDesiredCount: bm is not nil")
-    
-    // ✅ Check if mu is locked
-    log.Println("🟣🟣 GetDesiredCount: Attempting RLock...")
-    bm.mu.RLock()
-    log.Println("🟣🟣 GetDesiredCount: RLock acquired")
-    
-    defer func() {
-        log.Println("🟣🟣 GetDesiredCount: Unlocking...")
-        bm.mu.RUnlock()
-        log.Println("🟣🟣 GetDesiredCount: Unlocked")
-    }()
-    
-    log.Printf("🟣🟣 GetDesiredCount: Count = %d", bm.desiredCount)
-    return bm.desiredCount
+	if bm == nil {
+		return 20
+	}
+	return int(atomic.LoadInt32(&bm.desiredCount))
 }
 
 // ✅ Get or create bot users
@@ -85,7 +65,6 @@ func (bm *BotManager) getOrCreateBotUsers(count int) ([]*models.User, error) {
 	var botUsers []*models.User
 
 	// ✅ First, try to find existing bots that are not currently in a game
-	// We'll use a simple approach: find bots that haven't been used recently
 	var existingBots []models.User
 	err := bm.engine.db.
 		Where("is_bot = ?", true).
@@ -132,7 +111,7 @@ func (bm *BotManager) getOrCreateBotUsers(count int) ([]*models.User, error) {
 			PhoneNumber:  phone,
 			Balance:      1000.0,
 			ReferralCode: referralCode,
-			IsBot:        true, // ✅ Mark as bot
+			IsBot:        true,
 			CreatedAt:    time.Now(),
 			LastActive:   time.Now(),
 		}
@@ -187,7 +166,7 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 		count = MaxPlayers - currentPlayers
 	}
 
-	// ✅ Don't exceed desired count
+	// ✅ Don't exceed desired count (using atomic)
 	desiredCount := bm.GetDesiredCount()
 	if currentPlayers+count > desiredCount {
 		count = desiredCount - currentPlayers
@@ -405,7 +384,7 @@ func (bm *BotManager) checkAndReserveBots() {
 
 	currentPlayers := len(state.UserCards)
 	availableCount := 400 - len(state.ReservedCards)
-	desiredCount := bm.GetDesiredCount()
+	desiredCount := bm.GetDesiredCount() // ✅ Atomic call
 	state.mu.RUnlock()
 
 	// ✅ Don't add bots if we already have enough
@@ -423,7 +402,7 @@ func (bm *BotManager) checkAndReserveBots() {
 	if needed > availableCount {
 		needed = availableCount
 	}
-	
+
 	// ✅ Add 1-3 bots at a time (slowly reach target)
 	if needed > 3 {
 		needed = rand.Intn(3) + 1 // 1-3 bots
@@ -443,7 +422,7 @@ func (bm *BotManager) GetBotStats() map[string]interface{} {
 	return map[string]interface{}{
 		"total_bots":    len(bm.bots),
 		"is_running":    bm.isRunning,
-		"desired_count": bm.desiredCount,
+		"desired_count": int(atomic.LoadInt32(&bm.desiredCount)), // ✅ Atomic load
 	}
 }
 
