@@ -1,3 +1,5 @@
+// internal/sms/cbebirr_parser.go
+
 package sms
 
 import (
@@ -11,7 +13,6 @@ type CBEBirrTransaction struct {
 	Amount          float64
 	TransactionID   string // Txn ID
 	ReferenceNumber string // Reference number (same as Txn ID)
-	AccountSuffix   string // Account suffix (8 digits)
 	Sender          string
 	Receiver        string
 	Date            string
@@ -26,7 +27,7 @@ func ParseCBEBirrSMS(smsText string) *CBEBirrTransaction {
 		IsValid: false,
 	}
 
-	// Extract transaction ID
+	// Extract transaction ID / Reference Number
 	txnRegex := regexp.MustCompile(`(?:Txn ID|TID[=\s]+)([A-Z0-9]+)`)
 	if matches := txnRegex.FindStringSubmatch(smsText); len(matches) > 1 {
 		result.TransactionID = matches[1]
@@ -59,35 +60,20 @@ func ParseCBEBirrSMS(smsText string) *CBEBirrTransaction {
 		result.Date = matches[1]
 	}
 
-	// Extract phone number from URL or SMS
+	// ✅ Extract phone number from URL
 	phoneRegex := regexp.MustCompile(`PH=([0-9]+)`)
 	if matches := phoneRegex.FindStringSubmatch(smsText); len(matches) > 1 {
 		result.PhoneNumber = matches[1]
 	}
 
-	// Extract receipt URL
+	// ✅ Extract receipt URL
 	urlRegex := regexp.MustCompile(`https://cbepay1\.cbe\.com\.et/aureceipt\?TID=[A-Z0-9]+&PH=[0-9]+`)
 	if matches := urlRegex.FindString(smsText); matches != "" {
 		result.ReceiptURL = matches
 	}
 
-	// ✅ Extract account suffix from SMS
-	// Check for 8-digit suffix after "Account" or "Account Suffix"
-	suffixRegex := regexp.MustCompile(`suffix[:\s]+([0-9]{8})`)
-	if matches := suffixRegex.FindStringSubmatch(smsText); len(matches) > 1 {
-		result.AccountSuffix = matches[1]
-	}
-
-	// If no suffix found, try to extract from SMS text (look for 8 consecutive digits)
-	if result.AccountSuffix == "" {
-		digitsRegex := regexp.MustCompile(`\b([0-9]{8})\b`)
-		if matches := digitsRegex.FindStringSubmatch(smsText); len(matches) > 1 {
-			result.AccountSuffix = matches[1]
-		}
-	}
-
-	// Validate
-	if result.TransactionID != "" && result.Amount > 0 {
+	// ✅ Validate: need transaction ID, amount, and phone number
+	if result.TransactionID != "" && result.Amount > 0 && result.PhoneNumber != "" {
 		result.IsValid = true
 	}
 

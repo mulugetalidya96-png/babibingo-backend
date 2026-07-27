@@ -79,13 +79,14 @@ func (c *VerifyClient) VerifyTeleBirrTransaction(txnID string, amount float64, r
 	return c.doVerify(reqBody, txnID)
 }
 
+// internal/verify/verify.go - Fix CBE Birr verification
+
 // ✅ VerifyCBEBirrTransaction - Verify CBE Birr transaction
-func (c *VerifyClient) VerifyCBEBirrTransaction(referenceNumber string, accountSuffix string, phoneNumber string, amount float64) (*VerifyResponse, error) {
+func (c *VerifyClient) VerifyCBEBirrTransaction(referenceNumber string, phoneNumber string, amount float64) (*VerifyResponse, error) {
 	reqBody := VerifyRequest{
-		Bank:            "cbebirr",
+		Bank:          "cbebirr",
 		ReferenceNumber: referenceNumber,
-		AccountSuffix:   accountSuffix,
-		PhoneNumber:     phoneNumber,
+		PhoneNumber:   phoneNumber,
 	}
 	return c.doVerify(reqBody, referenceNumber)
 }

@@ -235,6 +235,8 @@ func (b *Bot) handleTelebirrSMS(
 		dbUser.Balance,
 	))
 }
+// internal/bot/handlers.go - Updated handleCBEBirrSMS
+
 func (b *Bot) handleCBEBirrSMS(
 	ctx context.Context,
 	chatID int64,
@@ -255,11 +257,10 @@ func (b *Bot) handleCBEBirrSMS(
 		return
 	}
 
-	// ✅ 3️⃣ Check for duplicate transaction
+	// 3️⃣ Check for duplicate transaction
 	var existingTransaction models.Transaction
 	err := b.db.Where("reference = ?", txnInfo.TransactionID).First(&existingTransaction).Error
 	if err == nil {
-		// Transaction already exists
 		b.sendMarkdown(ctx, chatID, fmt.Sprintf(
 			"⚠️ *Duplicate Transaction Detected*\n\n"+
 				"Transaction `%s` has already been processed.\n\n"+
@@ -285,14 +286,13 @@ func (b *Bot) handleCBEBirrSMS(
 	b.sendText(ctx, chatID, "⏳ Verifying CBE Birr transaction with verify.et...")
 
 	// 6️⃣ Set our business name (receiver)
-	babibingoPhoneNumber := "0940072277"
+	businessName := "BabiBingo"
 
 	// 7️⃣ Call verify.et API for CBE Birr
 	verifyClient := verify.NewVerifyClient(b.cfg.VerifyAPIKey)
 	verifyResp, err := verifyClient.VerifyCBEBirrTransaction(
 		txnInfo.ReferenceNumber,
-		txnInfo.AccountSuffix,
-		babibingoPhoneNumber,
+		txnInfo.PhoneNumber, // ✅ Phone number is required
 		txnInfo.Amount,
 	)
 	if err != nil {
@@ -330,9 +330,20 @@ func (b *Bot) handleCBEBirrSMS(
 		return
 	}
 
-	
+	// 1️⃣1️⃣ Check receiver name (our business account)
+	if txnData.ReceiverName != businessName {
+		b.sendText(ctx, chatID, fmt.Sprintf(
+			"❌ Transaction sent to wrong account.\n\n"+
+				"Expected: %s\n"+
+				"Received: %s\n\n"+
+				"Please send to the correct BabiBingo account.",
+			businessName,
+			txnData.ReceiverName,
+		))
+		return
+	}
 
-	// ✅ 1️⃣2️⃣ Double-check duplicate before saving (race condition protection)
+	// 1️⃣2️⃣ Double-check duplicate before saving
 	var checkDuplicate models.Transaction
 	if err := b.db.Where("reference = ?", txnInfo.TransactionID).First(&checkDuplicate).Error; err == nil {
 		b.sendText(ctx, chatID, "⚠️ This transaction was already processed by another request.")
@@ -359,7 +370,6 @@ func (b *Bot) handleCBEBirrSMS(
 		CreatedAt:   time.Now(),
 	}
 	if err := b.db.Create(&transaction).Error; err != nil {
-		// ✅ If duplicate is created between check and save
 		if strings.Contains(err.Error(), "duplicate") {
 			b.sendText(ctx, chatID, "⚠️ This transaction was already processed. Please check your balance.")
 			return
@@ -376,11 +386,13 @@ func (b *Bot) handleCBEBirrSMS(
 			"🆔 Transaction: `%s`\n"+
 			"📱 Sent via: CBE Birr\n"+
 			"📤 Sent to: %s\n"+
+			"📱 Phone: %s\n"+
 			"💳 New Balance: %.2f ETB\n\n"+
 			"🎮 Play now from the menu!",
 		txnInfo.Amount,
 		txnInfo.TransactionID,
-		babibingoPhoneNumber,
+		businessName,
+		txnInfo.PhoneNumber,
 		dbUser.Balance,
 	))
 }
