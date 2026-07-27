@@ -10,11 +10,16 @@ import (
 )
 
 // ReserveCard reserves a card for a user
+// package game - Add error broadcasting
+
+// ReserveCard reserves a card for a user
 func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	log.Printf("🔵 ReserveCard: telegram_id=%d, card=%d", telegramID, cardNumber)
 
 	if e.currentGame == nil {
-		return fmt.Errorf("no active game")
+		err := fmt.Errorf("no active game")
+		e.sendError(telegramID, err.Error())
+		return err
 	}
 
 	state := e.currentGame
@@ -22,30 +27,42 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	defer state.mu.Unlock()
 
 	if state.Game.Status != GameStatusWaiting {
-		return fmt.Errorf("game already started")
+		err := fmt.Errorf("game already started")
+		e.sendError(telegramID, err.Error())
+		return err
 	}
 
 	// Get user by Telegram ID
 	user, err := e.getUserByTelegramID(telegramID)
 	if err != nil {
+		errMsg := fmt.Sprintf("user not found: %v", err)
+		e.sendError(telegramID, errMsg)
 		return fmt.Errorf("user not found: %w", err)
 	}
 
 	// Check balance
 	if user.Balance < StakeAmount {
-		return fmt.Errorf("insufficient balance: need %.2f ETB, have %.2f ETB", StakeAmount, user.Balance)
+		err := fmt.Errorf("insufficient balance: need %.2f ETB, have %.2f ETB", StakeAmount, user.Balance)
+		e.sendError(telegramID, err.Error())
+		return err
 	}
 
 	// Check reservation
 	if reservedBy, ok := state.ReservedCards[cardNumber]; ok {
 		if reservedBy == telegramID {
-			return fmt.Errorf("card already reserved by you")
+			err := fmt.Errorf("card already reserved by you")
+			e.sendError(telegramID, err.Error())
+			return err
 		}
-		return fmt.Errorf("card already reserved by another player")
+		err := fmt.Errorf("card already reserved by another player")
+		e.sendError(telegramID, err.Error())
+		return err
 	}
 
 	if len(state.UserCards[telegramID]) >= MaxCardsPerPlayer {
-		return fmt.Errorf("maximum %d cards allowed per player", MaxCardsPerPlayer)
+		err := fmt.Errorf("maximum %d cards allowed per player", MaxCardsPerPlayer)
+		e.sendError(telegramID, err.Error())
+		return err
 	}
 
 	// Reserve in memory
@@ -56,9 +73,10 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	// Get card data
 	cardData, found := GetCardByID(cardNumber)
 	if !found {
-		// ✅ Rollback using the internal rollback (no lock)
 		e.rollbackReservationLocked(state, telegramID, cardNumber)
-		return fmt.Errorf("card data not found")
+		err := fmt.Errorf("card data not found")
+		e.sendError(telegramID, err.Error())
+		return err
 	}
 
 	// Create card record
@@ -74,8 +92,9 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	}
 
 	if err := e.db.Create(&card).Error; err != nil {
-		// ✅ Rollback using the internal rollback (no lock)
 		e.rollbackReservationLocked(state, telegramID, cardNumber)
+		errMsg := fmt.Sprintf("failed saving card: %v", err)
+		e.sendError(telegramID, errMsg)
 		return fmt.Errorf("failed saving card: %w", err)
 	}
 
@@ -100,6 +119,9 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	log.Printf("🟢 Card %d reserved for user %d", cardNumber, telegramID)
 	return nil
 }
+
+// ✅ sendError - Send error event to frontend
+
 
 // ✅ Internal rollback - assumes lock is already held
 func (e *Engine) rollbackReservationLocked(state *GameState, telegramID int64, cardNumber int) {
