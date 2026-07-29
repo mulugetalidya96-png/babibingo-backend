@@ -63,13 +63,13 @@ func (b *Bot) handleDepositBankSelection(
 			ctx,
 			chatID,
 			"📱 *Telebirr Deposit*\n\n"+
-				"Account: `0940072277` — Yonatan\n\n"+
+				"Account:  `0936033937` — Frezer Wudeneh\n\n"+
 				"━━━━━━━━━━━━━━━\n"+
 				"📱 *Telebirr Deposit Steps*\n\n"+
 				"1️⃣ ከላይ ባለው የ Telebirr አካውንት ገንዘቡን ያስገቡ።\n"+
 				"2️⃣ ክፍያ ካደረጉ በኋላ የ Telebirr የጹሁፍ መልክት (SMS) ይደርሳችኋል።\n"+
 				"3️⃣ የደረሳችሁን SMS ሙሉ በሙሉ ኮፒ (copy) በማረግ በዚህ ቻት ፔስት (paste) አድርጉ።\n\n"+
-				"💬 የክፍያ ችግር ካለ፣ @rasbingosupport ያናግሩ።\n\n"+
+				"💬 የክፍያ ችግር ካለ፣ @babibingosupport ያናግሩ።\n\n"+
 				"━━━━━━━━━━━━━━━\n"+
 				"📤 After sending payment, please paste the SMS confirmation below 👇",
 		)
@@ -79,13 +79,13 @@ func (b *Bot) handleDepositBankSelection(
 			ctx,
 			chatID,
 			"🏦 *CBEBirr Deposit*\n\n"+
-				"Account: `0940072277` — Yonatan\n\n"+
+				"Account: `0936033937` — Frezer Wudeneh\n\n"+
 				"━━━━━━━━━━━━━━━\n"+
 				"📱 *CBEBirr Deposit Steps*\n\n"+
 				"1️⃣ ከላይ ባለው የ CBEBirr አካውንት ገንዘቡን ያስገቡ።\n"+
 				"2️⃣ ክፍያ ካደረጉ በኋላ የ CBEBirr የጹሁፍ መልክት (SMS) ይደርሳችኋል።\n"+
 				"3️⃣ የደረሳችሁን SMS ሙሉ በሙሉ ኮፒ (copy) በማረግ በዚህ ቻት ፔስት (paste) አድርጉ።\n\n"+
-				"💬 የክፍያ ችግር ካለ፣ @rasbingosupport ያናግሩ።\n\n"+
+				"💬 የክፍያ ችግር ካለ፣ @babibingosupport ያናግሩ።\n\n"+
 				"━━━━━━━━━━━━━━━\n"+
 				"📤 After sending payment, please paste the SMS confirmation below 👇",
 		)

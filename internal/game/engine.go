@@ -21,7 +21,7 @@ const (
 	CallInterval       = 5 * time.Second
 	MaxCalls           = 75
 	StakeAmount        = 20.0
-	MaxCardsPerPlayer  = 2
+	MaxCardsPerPlayer  = 4
 	MaxPlayers         = 400
 	HouseCutPercent    = 0.10 // 10% house cut
 )
