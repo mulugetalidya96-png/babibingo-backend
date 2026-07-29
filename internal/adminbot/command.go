@@ -53,6 +53,8 @@ func (b *Bot) handleCommand(ctx context.Context, chatID int64, user *telego.User
         b.handleDeposits(ctx, chatID, args)
     case "withdrawals":
         b.handleWithdrawals(ctx, chatID, args)
+    case "dashboard":  // ✅ Add this case
+        b.showDashboard(ctx, chatID)
     case "games":
         b.handleGames(ctx, chatID, args)
     case "bots":

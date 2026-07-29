@@ -116,6 +116,9 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 		Message:    fmt.Sprintf("Card #%d reserved! Prize Pool: $%.2f", cardNumber, netPool),
 	})
 
+	// ✅ Send balance update to the user (balance hasn't changed, but confirms it)
+	e.sendBalanceUpdate(telegramID, user.Balance)
+
 	log.Printf("🟢 Card %d reserved for user %d", cardNumber, telegramID)
 	return nil
 }
@@ -189,6 +192,9 @@ func (e *Engine) CancelReservation(telegramID int64, cardNumber int) error {
 		Message:    fmt.Sprintf("Card #%d cancelled. Prize Pool: $%.2f", cardNumber, netPool),
 	})
 
+	// ✅ Send balance update to the user
+	e.sendBalanceUpdate(telegramID, user.Balance)
+
 	return nil
 }
 
@@ -223,7 +229,7 @@ func (e *Engine) sendToUser(telegramID int64, data []byte) {
 		if client.UserID == telegramID {
 			select {
 			case client.Send <- data:
-				log.Printf("✅ Error sent directly to user %d", telegramID)
+				log.Printf("✅ Message sent directly to user %d", telegramID)
 			default:
 				log.Printf("⚠️ Client send buffer full for user %d", telegramID)
 			}
@@ -232,12 +238,28 @@ func (e *Engine) sendToUser(telegramID int64, data []byte) {
 	}
 
 	// Fallback: broadcast if user not found in clients
-	log.Printf("⚠️ User %d not found in clients, broadcasting error as fallback", telegramID)
+	log.Printf("⚠️ User %d not found in clients, broadcasting as fallback", telegramID)
 	
-	// ✅ Need to broadcast the event (but we already have the event struct)
-	// Since we have the event, broadcast it
+	// Since we have the data, broadcast it
 	var event GameEvent
 	if err := json.Unmarshal(data, &event); err == nil {
 		e.broadcast(event)
 	}
+}
+
+// ✅ sendBalanceUpdate - Send balance update to a specific user
+func (e *Engine) sendBalanceUpdate(telegramID int64, balance float64) {
+	event := GameEvent{
+		Type:    "balance.update",
+		UserID:  telegramID,
+		Balance: balance,
+	}
+
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("⚠️ Failed to marshal balance update: %v", err)
+		return
+	}
+
+	e.sendToUser(telegramID, data)
 }
