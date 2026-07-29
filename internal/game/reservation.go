@@ -192,7 +192,7 @@ func (e *Engine) CancelReservation(telegramID int64, cardNumber int) error {
 	return nil
 }
 
-// ✅ sendError - Send error event to specific user (not broadcast)
+// ✅ sendError - Send error event to specific user (no deadlock)
 func (e *Engine) sendError(telegramID int64, message string) {
 	log.Printf("🔴 Sending error to user %d: %s", telegramID, message)
 
@@ -209,7 +209,13 @@ func (e *Engine) sendError(telegramID int64, message string) {
 		return
 	}
 
-	// Send to specific user via WebSocket
+	// Send to specific user
+	e.sendToUser(telegramID, data)
+}
+
+// ✅ sendToUser - Send data to a specific user (no deadlock)
+func (e *Engine) sendToUser(telegramID int64, data []byte) {
+	// ✅ Use the engine's client map with read lock
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -227,5 +233,11 @@ func (e *Engine) sendError(telegramID int64, message string) {
 
 	// Fallback: broadcast if user not found in clients
 	log.Printf("⚠️ User %d not found in clients, broadcasting error as fallback", telegramID)
-	e.broadcast(event)
+	
+	// ✅ Need to broadcast the event (but we already have the event struct)
+	// Since we have the event, broadcast it
+	var event GameEvent
+	if err := json.Unmarshal(data, &event); err == nil {
+		e.broadcast(event)
+	}
 }
