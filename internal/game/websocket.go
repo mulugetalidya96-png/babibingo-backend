@@ -69,8 +69,10 @@ func (h *WSHub) Run() {
 				select {
 				case client.Send <- message:
 				default:
-					close(client.Send)
-					delete(h.clients, client)
+					// Client not responding, remove them
+					go func(c *WSClient) {
+						h.unregister <- c
+					}(client)
 				}
 			}
 			h.mu.RUnlock()
@@ -81,20 +83,27 @@ func (h *WSHub) Run() {
 func (h *WSHub) BroadcastToUser(userID int64, data []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	
 	for client := range h.clients {
 		if client.UserID == userID {
 			select {
 			case client.Send <- data:
 			default:
-				close(client.Send)
-				delete(h.clients, client)
+				// Client not responding, remove them
+				go func(c *WSClient) {
+					h.unregister <- c
+				}(client)
 			}
 		}
 	}
 }
 
 func (h *WSHub) BroadcastAll(data []byte) {
-	h.broadcast <- data
+	select {
+	case h.broadcast <- data:
+	default:
+		log.Printf("Broadcast channel full, dropping message")
+	}
 }
 
 func HandleWebSocket(hub *WSHub, engine *Engine) gin.HandlerFunc {
@@ -122,8 +131,15 @@ func HandleWebSocket(hub *WSHub, engine *Engine) gin.HandlerFunc {
 
 		hub.register <- client
 
-		// Send initial game state
-		go sendInitialState(client, engine)
+		// Send initial game state with recovery
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[WS] Panic in sendInitialState: %v", r)
+				}
+			}()
+			sendInitialState(client, engine)
+		}()
 
 		go client.writePump()
 		go client.readPump(hub, engine)
@@ -132,6 +148,9 @@ func HandleWebSocket(hub *WSHub, engine *Engine) gin.HandlerFunc {
 
 func (c *WSClient) readPump(hub *WSHub, engine *Engine) {
 	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[WS] Panic in readPump: %v", r)
+		}
 		hub.unregister <- c
 		c.Conn.Close()
 	}()
@@ -165,6 +184,9 @@ func (c *WSClient) writePump() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer func() {
 		ticker.Stop()
+		if r := recover(); r != nil {
+			log.Printf("[WS] Panic in writePump: %v", r)
+		}
 		c.Conn.Close()
 	}()
 
@@ -176,11 +198,15 @@ func (c *WSClient) writePump() {
 				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-			c.Conn.WriteMessage(websocket.TextMessage, message)
+			if err := c.Conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				log.Printf("[WS] Failed to write message: %v", err)
+				return
+			}
 
 		case <-ticker.C:
 			c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				log.Printf("[WS] Failed to send ping: %v", err)
 				return
 			}
 		}
@@ -188,13 +214,15 @@ func (c *WSClient) writePump() {
 }
 
 type WSRequest struct {
-	Type        string   `json:"type"`
-	CardNumbers []int    `json:"card_numbers,omitempty"`
-	CardNumber  int    `json:"card_number,omitempty"` // NEW
-	CardID      string   `json:"card_id,omitempty"`
+	Type        string `json:"type"`
+	CardNumbers []int  `json:"card_numbers,omitempty"`
+	CardNumber  int    `json:"card_number,omitempty"`
+	CardID      string `json:"card_id,omitempty"`
 }
 
 func handleWSMessage(client *WSClient, engine *Engine, req WSRequest) {
+	log.Printf("[WS] Handling message type: %s from user %d", req.Type, client.UserID)
+
 	switch req.Type {
 	case "card.select":
 		game, cards, err := engine.JoinGame(client.UserID, req.CardNumbers)
@@ -210,19 +238,19 @@ func handleWSMessage(client *WSClient, engine *Engine, req WSRequest) {
 		})
 
 	case "bingo.claim":
-		// Parse card ID and claim bingo
-		// Implementation depends on your card ID format
 		sendToClient(client, WSResponse{Type: "info", Message: "Bingo claim received"})
-    case "card.reserve":
-	err := engine.ReserveCard(client.UserID, req.CardNumber)
-	if err != nil {
-		sendToClient(client, WSResponse{
-			Type: "error",
-			Message: err.Error(),
-		})
-		return
-	}
-	case "card.cancel": // ✅ NEW: Handle card cancellation
+
+	case "card.reserve":
+		err := engine.ReserveCard(client.UserID, req.CardNumber)
+		if err != nil {
+			sendToClient(client, WSResponse{
+				Type:    "error",
+				Message: err.Error(),
+			})
+			return
+		}
+
+	case "card.cancel":
 		log.Printf("[WS] User %d cancelling card %d", client.UserID, req.CardNumber)
 		err := engine.CancelReservation(client.UserID, req.CardNumber)
 		if err != nil {
@@ -232,6 +260,7 @@ func handleWSMessage(client *WSClient, engine *Engine, req WSRequest) {
 			})
 			return
 		}
+
 	case "game.state":
 		state, err := engine.GetGameState(client.UserID)
 		if err != nil {
@@ -241,6 +270,13 @@ func handleWSMessage(client *WSClient, engine *Engine, req WSRequest) {
 		sendToClient(client, WSResponse{
 			Type:  "game.state",
 			State: state,
+		})
+
+	default:
+		log.Printf("[WS] Unknown message type: %s", req.Type)
+		sendToClient(client, WSResponse{
+			Type:    "error",
+			Message: "Unknown message type",
 		})
 	}
 }
@@ -253,21 +289,54 @@ type WSResponse struct {
 	Message string      `json:"message,omitempty"`
 }
 
+// ✅ Fixed sendToClient with recovery
 func sendToClient(client *WSClient, resp WSResponse) {
-	data, _ := json.Marshal(resp)
+	if client == nil {
+		return
+	}
+
+	data, err := json.Marshal(resp)
+	if err != nil {
+		log.Printf("[WS] Failed to marshal response: %v", err)
+		return
+	}
+
+	// ✅ Use defer recover to prevent panic on closed channel
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[WS] Recovered from panic sending to client %s: %v", client.ID, r)
+		}
+	}()
+
 	select {
 	case client.Send <- data:
+		// Success
 	default:
+		// Channel is full or closed
+		log.Printf("[WS] Client %s send buffer full or channel closed", client.ID)
 	}
 }
 
+// ✅ Fixed sendInitialState with recovery
 func sendInitialState(client *WSClient, engine *Engine) {
+	if client == nil {
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[WS] Panic in sendInitialState for client %s: %v", client.ID, r)
+		}
+	}()
+
 	state, err := engine.GetGameState(client.UserID)
 	if err != nil {
 		// No active game
 		sendToClient(client, WSResponse{
-			Type:    "game.state",
-			State:   map[string]string{"status": "waiting"},
+			Type: "game.state",
+			State: map[string]interface{}{
+				"status": "idle",
+			},
 			Message: "Waiting for next game",
 		})
 		return
@@ -281,11 +350,23 @@ func sendInitialState(client *WSClient, engine *Engine) {
 
 // SubscribeToRedis subscribes to Redis pub/sub for multi-instance support
 func SubscribeToRedis(hub *WSHub, engine *Engine) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[Redis] Panic in SubscribeToRedis: %v", r)
+		}
+	}()
+
 	pubsub := engine.SubscribeEvents()
+	if pubsub == nil {
+		log.Printf("[Redis] Failed to subscribe to events")
+		return
+	}
 	defer pubsub.Close()
 
 	ch := pubsub.Channel()
 	for msg := range ch {
-		hub.BroadcastAll([]byte(msg.Payload))
+		if msg != nil && len(msg.Payload) > 0 {
+			hub.BroadcastAll([]byte(msg.Payload))
+		}
 	}
 }

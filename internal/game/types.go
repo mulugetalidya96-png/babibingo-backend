@@ -26,6 +26,7 @@ type GameEvent struct {
 	WinningCards []models.Card  `json:"winning_cards,omitempty"`
 	UserID      int64       `json:"user_id,omitempty"`
 	Card        *models.Card `json:"card,omitempty"`
+	Balance       float64        `json:"balance"`
 }
 
 // WinnerInfo represents winner information

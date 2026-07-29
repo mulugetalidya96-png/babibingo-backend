@@ -35,6 +35,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	}()
 
 	totalPool := 0.0
+	commissionEarned := make(map[int64]float64) // Track commissions per agent (by Telegram ID)
 
 	for telegramID := range telegramIDs {
 		cardCount := len(state.UserCards[telegramID])
@@ -66,7 +67,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 		}
 		log.Printf("  ✅ Deducted balance for user %d, new balance: %.2f", telegramID, user.Balance)
 
-		// ✅ Create transaction records with unique reference
+		// Create transaction records with unique reference
 		for _, cardNumber := range state.UserCards[telegramID] {
 			reference := fmt.Sprintf("stake_%s_%d_%d", 
 				state.Game.ID.String()[:8], 
@@ -90,22 +91,28 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			log.Printf("  ✅ Created transaction for card #%d", cardNumber)
 		}
 
-		// ✅ NEW: Agent Commission Logic
-		// Check if this user was referred by an agent
+		// ✅ Agent Commission Logic
 		if user.ReferredBy != nil {
 			var agent models.User
 			if err := tx.Where("id = ?", *user.ReferredBy).First(&agent).Error; err == nil {
-				// ✅ Only pay commission if the referrer is an agent
 				if agent.IsAgent {
 					// Commission: 1 ETB per card
 					commission := float64(cardCount) * 1.0
+					
+					// ✅ Update BOTH AgentBalance AND Balance (regular balance)
 					agent.AgentBalance += commission
+					agent.Balance += commission // ✅ Add to regular balance too
+					
+					// Track commission for this agent
+					commissionEarned[agent.TelegramID] = commissionEarned[agent.TelegramID] + commission
 					
 					if err := tx.Save(&agent).Error; err != nil {
 						log.Printf("⚠️ Failed to update agent balance: %v", err)
 					} else {
 						log.Printf("💰 Agent %d (Telegram: %d) earned %.2f ETB commission from user %d", 
 							agent.ID, agent.TelegramID, commission, user.ID)
+						log.Printf("   📊 Agent Balance: %.2f, Regular Balance: %.2f", 
+							agent.AgentBalance, agent.Balance)
 						
 						// Create commission transaction
 						commissionReference := fmt.Sprintf("comm_%d_%d_%d", 
@@ -190,5 +197,24 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	}
 
 	log.Printf("✅ Collected total pool: %.2f", totalPool)
+
+	// ✅ Send balance updates to agents who earned commissions
+	for agentTelegramID, commissionAmount := range commissionEarned {
+		if commissionAmount > 0 {
+			// Get the agent's updated balance
+			var agent models.User
+			if err := e.db.Where("telegram_id = ?", agentTelegramID).First(&agent).Error; err == nil {
+				// Send balance update via WebSocket
+				e.broadcast(GameEvent{
+					Type:    "balance.update",
+					UserID:  agentTelegramID,
+					Balance: agent.Balance, // ✅ Send the updated regular balance
+				})
+				log.Printf("💰 Sent balance update to agent %d: %.2f ETB (Agent Balance: %.2f)", 
+					agentTelegramID, agent.Balance, agent.AgentBalance)
+			}
+		}
+	}
+
 	return nil
 }
