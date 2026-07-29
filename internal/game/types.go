@@ -62,4 +62,5 @@ type GameStateResponse struct {
 	MyCards       []models.Card  `json:"my_cards"`
 	MaxCards      int            `json:"max_cards"`
 	ReservedCards []int          `json:"reserved_cards"`
+	Balance       float64        `json:"balance"`
 }

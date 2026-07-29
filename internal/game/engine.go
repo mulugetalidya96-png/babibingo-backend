@@ -145,6 +145,7 @@ func (e *Engine) GetGameState(userID int64) (*GameStateResponse, error) {
 		MyCards:       myCards,
 		MaxCards:      MaxCardsPerPlayer,
 		ReservedCards: reservedCards,
+		Balance:       user.Balance,
 	}, nil
 }
 // GetGameStats returns game statistics for admin dashboard
