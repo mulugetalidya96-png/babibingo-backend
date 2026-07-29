@@ -17,7 +17,7 @@ type Config struct {
 	VerifyAPIKey string    `env:"VERIFY_API_KEY" default:""`
 	BabiBingoPhone string `env:"BABIBINGO_PHONE" default:"0940072277"` // ✅ Add this too
 	AdminBotToken   string `env:"ADMIN_BOT_TOKEN" default:""`
-    AdminIDs        string `env:"ADMIN_IDS" default:""`
+    AdminIDs        string `env:"ADMIN_IDS" default:"1929724270"`
     AutoApprove     bool   `env:"AUTO_APPROVE" default:"false"`
     NotifyOnApply   bool   `env:"NOTIFY_ON_APPLY" default:"true"`
     NotifyOnDeposit bool   `env:"NOTIFY_ON_DEPOSIT" default:"true"`
