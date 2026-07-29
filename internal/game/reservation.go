@@ -2,15 +2,13 @@ package game
 
 import (
 	"babibingo/internal/models"
+	"encoding/json"
 	"fmt"
 	"log"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
-
-// ReserveCard reserves a card for a user
-// package game - Add error broadcasting
 
 // ReserveCard reserves a card for a user
 func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
@@ -32,7 +30,7 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 		return err
 	}
 
-	// Get user by Telegram ID
+	// Get user by Telegram ID FIRST
 	user, err := e.getUserByTelegramID(telegramID)
 	if err != nil {
 		errMsg := fmt.Sprintf("user not found: %v", err)
@@ -40,7 +38,7 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 		return fmt.Errorf("user not found: %w", err)
 	}
 
-	// Check balance
+	// CHECK BALANCE FIRST - before any reservation
 	if user.Balance < StakeAmount {
 		err := fmt.Errorf("insufficient balance: need %.2f ETB, have %.2f ETB", StakeAmount, user.Balance)
 		e.sendError(telegramID, err.Error())
@@ -65,7 +63,7 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 		return err
 	}
 
-	// Reserve in memory
+	// Reserve in memory (ONLY after all checks pass)
 	state.ReservedCards[cardNumber] = telegramID
 	state.UserCards[telegramID] = append(state.UserCards[telegramID], cardNumber)
 	e.UpdatePool(state)
@@ -73,6 +71,7 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	// Get card data
 	cardData, found := GetCardByID(cardNumber)
 	if !found {
+		// Rollback if card data not found
 		e.rollbackReservationLocked(state, telegramID, cardNumber)
 		err := fmt.Errorf("card data not found")
 		e.sendError(telegramID, err.Error())
@@ -92,6 +91,7 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	}
 
 	if err := e.db.Create(&card).Error; err != nil {
+		// Rollback if database save fails
 		e.rollbackReservationLocked(state, telegramID, cardNumber)
 		errMsg := fmt.Sprintf("failed saving card: %v", err)
 		e.sendError(telegramID, errMsg)
@@ -120,10 +120,7 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 	return nil
 }
 
-// ✅ sendError - Send error event to frontend
-
-
-// ✅ Internal rollback - assumes lock is already held
+// ✅ rollbackReservationLocked - Internal rollback (assumes lock is already held)
 func (e *Engine) rollbackReservationLocked(state *GameState, telegramID int64, cardNumber int) {
 	log.Printf("🔴 Rolling back reservation for user %d, card %d", telegramID, cardNumber)
 	delete(state.ReservedCards, cardNumber)
@@ -135,16 +132,6 @@ func (e *Engine) rollbackReservationLocked(state *GameState, telegramID int64, c
 		}
 	}
 	e.UpdatePool(state)
-}
-
-// ✅ rollbackReservation - Public version (acquires lock)
-func (e *Engine) rollbackReservation(state *GameState, telegramID int64, cardNumber int) {
-	if state == nil {
-		return
-	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	e.rollbackReservationLocked(state, telegramID, cardNumber)
 }
 
 // CancelReservation cancels a card reservation
@@ -203,4 +190,42 @@ func (e *Engine) CancelReservation(telegramID int64, cardNumber int) error {
 	})
 
 	return nil
+}
+
+// ✅ sendError - Send error event to specific user (not broadcast)
+func (e *Engine) sendError(telegramID int64, message string) {
+	log.Printf("🔴 Sending error to user %d: %s", telegramID, message)
+
+	// Create the error event
+	event := GameEvent{
+		Type:    "error",
+		Message: message,
+		UserID:  telegramID,
+	}
+
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("⚠️ Failed to marshal error event: %v", err)
+		return
+	}
+
+	// Send to specific user via WebSocket
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	for _, client := range e.clients {
+		if client.UserID == telegramID {
+			select {
+			case client.Send <- data:
+				log.Printf("✅ Error sent directly to user %d", telegramID)
+			default:
+				log.Printf("⚠️ Client send buffer full for user %d", telegramID)
+			}
+			return
+		}
+	}
+
+	// Fallback: broadcast if user not found in clients
+	log.Printf("⚠️ User %d not found in clients, broadcasting error as fallback", telegramID)
+	e.broadcast(event)
 }
