@@ -18,10 +18,8 @@ var (
 // InitCardCache initializes the card cache
 func InitCardCache() {
 	cardCacheOnce.Do(func() {
-		// Try to load from JSON file
 		if err := LoadCardsFromJSON("data/cards.json"); err != nil {
 			log.Printf("⚠️ Failed to load cards from JSON: %v, generating random cards", err)
-			// Generate all 75 cards as fallback
 			predefinedCards = make([]models.CardJSON, 0, 400)
 			for i := 1; i <= 75; i++ {
 				predefinedCards = append(predefinedCards, generateRandomCard(i))
@@ -42,7 +40,6 @@ func LoadCardsFromJSON(path string) error {
 
 // GetCardByID returns a card by its ID (1-75)
 func GetCardByID(id int) (models.CardJSON, bool) {
-	// Ensure cache is initialized
 	InitCardCache()
 	
 	for _, card := range predefinedCards {
@@ -51,7 +48,6 @@ func GetCardByID(id int) (models.CardJSON, bool) {
 		}
 	}
 	
-	// If not found, generate a random card as fallback
 	log.Printf("⚠️ Card %d not found in cache, generating random card", id)
 	return generateRandomCard(id), true
 }
@@ -62,7 +58,6 @@ func GetAllCards() []models.CardJSON {
 	return predefinedCards
 }
 
-// checkWinPattern checks if a card has a winning pattern
 // checkWinPattern checks if a card has a winning pattern
 func checkWinPattern(card models.CardJSON, marked []int) string {
 	markedSet := make(map[int]bool)
@@ -83,7 +78,6 @@ func checkWinPattern(card models.CardJSON, marked []int) string {
 	for i, n := range card.I {
 		grid[i][1] = &n
 	}
-	// ✅ N column: card.N is already []*int with nil at position 2
 	for i, n := range card.N {
 		grid[i][2] = n // n is *int or nil
 	}
@@ -155,8 +149,40 @@ func checkWinPattern(card models.CardJSON, marked []int) string {
 		return "diagonal"
 	}
 
+	// ✅ NEW: Check Four Corners
+	// Corners: (0,0), (0,4), (4,0), (4,4)
+	corners := [][2]int{{0, 0}, {0, 4}, {4, 0}, {4, 4}}
+	allCornersMarked := true
+	for _, pos := range corners {
+		if !isMarked(pos[0], pos[1]) {
+			allCornersMarked = false
+			break
+		}
+	}
+	if allCornersMarked {
+		return "four_corners"
+	}
+
+	// ✅ NEW: Check Center Cross
+	// Center cross: middle row (2,0-4) and middle column (0-4,2)
+	centerCross := [][2]int{
+		 {2, 1}, {2, 2}, {2, 3}, // Middle row
+		 {1, 2}, {3, 2}, // Middle column (excluding center which is already counted)
+	}
+	allCrossMarked := true
+	for _, pos := range centerCross {
+		if !isMarked(pos[0], pos[1]) {
+			allCrossMarked = false
+			break
+		}
+	}
+	if allCrossMarked {
+		return "center_cross"
+	}
+
 	return ""
 }
+
 // verifyWinDoubleCheck verifies a win by counting marked cells in the pattern
 func verifyWinDoubleCheck(card models.CardJSON, marked []int, pattern string) bool {
 	markedSet := make(map[int]bool)
@@ -241,6 +267,27 @@ func verifyWinDoubleCheck(card models.CardJSON, marked []int, pattern string) bo
 			}
 		}
 		return markedCount == 5
+
+	case "four_corners":
+		corners := [][2]int{{0, 0}, {0, 4}, {4, 0}, {4, 4}}
+		for _, pos := range corners {
+			if !isMarked(pos[0], pos[1]) {
+				return false
+			}
+		}
+		return true
+
+	case "center_cross":
+		centerCross := [][2]int{
+			{2, 1}, {2, 2}, {2, 3},
+			{1, 2}, {3, 2},
+		}
+		for _, pos := range centerCross {
+			if !isMarked(pos[0], pos[1]) {
+				return false
+			}
+		}
+		return true
 
 	default:
 		return false
