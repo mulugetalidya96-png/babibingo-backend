@@ -208,10 +208,3 @@ func (e *Engine) GetTotalPoolAllGames() float64 {
 // In engine.go - Add this helper to send error events to frontend
 
 // sendError sends an error event to the frontend
-func (e *Engine) sendError(telegramID int64, message string) {
-	e.broadcast(GameEvent{
-		Type:    "error",
-		Message: message,
-		UserID:  telegramID,
-	})
-}
