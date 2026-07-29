@@ -6,6 +6,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"babibingo/internal/config"
@@ -31,6 +32,7 @@ type Bot struct {
 	engine      *game.Engine
 	startTime   time.Time
 	botSettings BotSettings
+	tempState   sync.Map
 }
 
 func New(token string, db *gorm.DB, cfg *config.Config, engine *game.Engine) (*Bot, error) {
@@ -106,6 +108,7 @@ func New(token string, db *gorm.DB, cfg *config.Config, engine *game.Engine) (*B
 		botName:    me.Username,
 		engine:     engine,
 		startTime:  time.Now(),
+		tempState:  sync.Map{},
 		botSettings: BotSettings{
 			AutoApprove: false,
 		},

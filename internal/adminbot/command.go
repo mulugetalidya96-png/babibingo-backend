@@ -24,7 +24,11 @@ func (b *Bot) handleMessage(ctx context.Context, msg *telego.Message) {
     if !b.checkAdminAccess(ctx, chatID, user.ID) {
         return
     }
-
+    // ✅ Check if we're waiting for bot count input
+	if state, ok := b.tempState.Load(chatID); ok && state == "awaiting_bot_count" {
+		b.handleBotCountInput(ctx, chatID, text)
+		return
+	}
     // Log admin action
     log.Printf("📋 Admin %d (%s): %s", user.ID, user.Username, text)
 
@@ -35,6 +39,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *telego.Message) {
     }
 
     b.sendAdminMenu(ctx, chatID)
+    
 }
 
 func (b *Bot) handleCommand(ctx context.Context, chatID int64, user *telego.User, text string) {

@@ -36,8 +36,19 @@ func (b *Bot) handleBots(ctx context.Context, chatID int64, args []string) {
 				return
 			}
 			b.setBotCount(ctx, chatID, count)
+			// ✅ Clear the user's state after setting
+			b.tempState.Delete(chatID)
 		} else {
-			b.sendText(ctx, chatID, "📝 Please enter the desired bot count (1-100):\n\nExample: /bots set 30")
+			// ✅ Prompt user to enter a number
+			b.sendMarkdown(
+				ctx,
+				chatID,
+				"📝 *Set Bot Count*\n\n"+
+					"Please enter the desired number of bots (1-100).\n\n"+
+					"Example: `30`",
+			)
+			// ✅ Store that we're waiting for a count
+			b.tempState.Store(chatID, "awaiting_bot_count")
 		}
 	case "status":
 		b.showBotStatus(ctx, chatID)
@@ -269,4 +280,20 @@ func (b *Bot) getDesiredBotCount() int {
 		return b.engine.GetBotManager().GetDesiredCount()
 	}
 	return defaultRobotSettings.DesiredCount
+}
+
+// ✅ handleBotCountInput - Handle user input for bot count
+func (b *Bot) handleBotCountInput(ctx context.Context, chatID int64, text string) {
+	// Parse the number
+	count, err := strconv.Atoi(text)
+	if err != nil || count < 1 || count > 100 {
+		b.sendText(ctx, chatID, "❌ Invalid count. Please enter a number between 1 and 100.\n\nExample: `30`")
+		return
+	}
+
+	// Set the count
+	b.setBotCount(ctx, chatID, count)
+	
+	// Clear the state
+	b.tempState.Delete(chatID)
 }
