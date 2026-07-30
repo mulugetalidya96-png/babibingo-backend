@@ -43,14 +43,25 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 
 		log.Printf("🟡 User %d has %d cards, total stake: %.2f", telegramID, cardCount, totalStake)
 
-		// Get user by Telegram ID
+		// ✅ Get user by Telegram ID - Include is_bot check
 		var user models.User
-		if err := tx.Where("telegram_id = ?", telegramID).First(&user).Error; err != nil {
+		if err := tx.Where("telegram_id = ? AND is_bot = ?", telegramID, false).First(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// ✅ Skip if user is a bot or doesn't exist
+				log.Printf("⚠️ User %d is a bot or not found, skipping stake deduction", telegramID)
+				continue
+			}
 			tx.Rollback()
 			return fmt.Errorf("user with telegram_id %d not found: %w", telegramID, err)
 		}
 
-		log.Printf("  ✅ Found user: ID=%d, TelegramID=%d", user.ID, user.TelegramID)
+		log.Printf("  ✅ Found user: ID=%d, TelegramID=%d, IsBot=%v", user.ID, user.TelegramID, user.IsBot)
+
+		// ✅ Skip bots (double-check)
+		if user.IsBot {
+			log.Printf("⚠️ User %d is a bot, skipping stake deduction", telegramID)
+			continue
+		}
 
 		// Check balance
 		if user.Balance < totalStake {
@@ -91,17 +102,18 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			log.Printf("  ✅ Created transaction for card #%d", cardNumber)
 		}
 
-		// ✅ Agent Commission Logic
+		// ✅ Agent Commission Logic - Only for real users
 		if user.ReferredBy != nil {
 			var agent models.User
-			if err := tx.Where("id = ?", *user.ReferredBy).First(&agent).Error; err == nil {
-				if agent.IsAgent {
+			if err := tx.Where("id = ? AND is_agent = ?", *user.ReferredBy, true).First(&agent).Error; err == nil {
+				// ✅ Skip if agent is a bot
+				if !agent.IsBot {
 					// Commission: 1 ETB per card
 					commission := float64(cardCount) * 1.0
 					
-					// ✅ Update BOTH AgentBalance AND Balance (regular balance)
+					// Update BOTH AgentBalance AND Balance (regular balance)
 					agent.AgentBalance += commission
-					agent.Balance += commission // ✅ Add to regular balance too
+					agent.Balance += commission
 					
 					// Track commission for this agent
 					commissionEarned[agent.TelegramID] = commissionEarned[agent.TelegramID] + commission
@@ -136,7 +148,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 					}
 				}
 			} else {
-				log.Printf("⚠️ Referrer %d not found for user %d", *user.ReferredBy, user.ID)
+				log.Printf("⚠️ Agent %d not found or not an agent", *user.ReferredBy)
 			}
 		}
 
@@ -185,6 +197,13 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 		totalPool += totalStake
 	}
 
+	// ✅ Check if there are any real players (skip if only bots)
+	if totalPool == 0 {
+		tx.Rollback()
+		log.Println("⚠️ No real players found, cancelling game...")
+		return fmt.Errorf("no real players with sufficient balance")
+	}
+
 	// Update the game's total pool
 	state.Game.TotalPool = totalPool
 	if err := tx.Save(state.Game).Error; err != nil {
@@ -203,12 +222,12 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 		if commissionAmount > 0 {
 			// Get the agent's updated balance
 			var agent models.User
-			if err := e.db.Where("telegram_id = ?", agentTelegramID).First(&agent).Error; err == nil {
+			if err := e.db.Where("telegram_id = ? AND is_bot = ?", agentTelegramID, false).First(&agent).Error; err == nil {
 				// Send balance update via WebSocket
 				e.broadcast(GameEvent{
 					Type:    "balance.update",
 					UserID:  agentTelegramID,
-					Balance: agent.Balance, // ✅ Send the updated regular balance
+					Balance: agent.Balance,
 				})
 				log.Printf("💰 Sent balance update to agent %d: %.2f ETB (Agent Balance: %.2f)", 
 					agentTelegramID, agent.Balance, agent.AgentBalance)

@@ -489,79 +489,7 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 }
 
 // reserveCardForBot reserves a card for a bot
-func (bm *BotManager) reserveCardForBot(state *GameState, user *models.User, cardNumber int) error {
-	// Check if card is already reserved
-	if _, ok := state.ReservedCards[cardNumber]; ok {
-		return fmt.Errorf("card already reserved")
-	}
 
-	// Reserve in memory
-	state.ReservedCards[cardNumber] = user.TelegramID
-	state.UserCards[user.TelegramID] = append(state.UserCards[user.TelegramID], cardNumber)
-	bm.engine.UpdatePool(state)
-
-	// Get card data
-	cardData, found := GetCardByID(cardNumber)
-	if !found {
-		// Rollback
-		delete(state.ReservedCards, cardNumber)
-		userCards := state.UserCards[user.TelegramID]
-		for i, num := range userCards {
-			if num == cardNumber {
-				state.UserCards[user.TelegramID] = append(userCards[:i], userCards[i+1:]...)
-				break
-			}
-		}
-		bm.engine.UpdatePool(state)
-		return fmt.Errorf("card not found")
-	}
-
-	// Create card record
-	card := models.Card{
-		ID:            uuid.New(),
-		GameID:        state.Game.ID,
-		UserID:        user.ID,
-		CardNumber:    cardNumber,
-		CardData:      cardData,
-		MarkedNumbers: pq.Int64Array{},
-		IsWinner:      false,
-		Status:        "reserved",
-	}
-
-	if err := bm.engine.db.Create(&card).Error; err != nil {
-		// Rollback
-		delete(state.ReservedCards, cardNumber)
-		userCards := state.UserCards[user.TelegramID]
-		for i, num := range userCards {
-			if num == cardNumber {
-				state.UserCards[user.TelegramID] = append(userCards[:i], userCards[i+1:]...)
-				break
-			}
-		}
-		bm.engine.UpdatePool(state)
-		return err
-	}
-
-	// Broadcast the reservation event
-	grossPool := state.Game.TotalPool
-	netPool, houseCut := GetPoolBreakdown(grossPool)
-
-	bm.engine.broadcast(GameEvent{
-		Type:       "card.reserved",
-		GameID:     state.Game.ID.String(),
-		CardNumber: cardNumber,
-		UserID:     user.TelegramID,
-		Card:       &card,
-		Players:    len(state.UserCards),
-		Pool:       netPool,
-		GrossPool:  grossPool,
-		HouseCut:   houseCut,
-		Stake:      StakeAmount,
-		Message:    fmt.Sprintf("Card #%d reserved", cardNumber),
-	})
-
-	return nil
-}
 func (bm *BotManager) reserveCardState(
 	state *GameState,
 	user *models.User,
