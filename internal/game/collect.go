@@ -13,6 +13,7 @@ import (
 
 // collectAllStakes collects stakes from all players with reservations (including bots)
 // OPTIMIZED: Batch operations, reduced queries, and parallel processing
+// NOW ALLOWS: Game to start even with only bots (for testing/demo)
 func (e *Engine) collectAllStakes(state *GameState) error {
 	// Get all unique Telegram IDs with reservations
 	telegramIDs := make(map[int64]bool)
@@ -26,6 +27,10 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	}
 
 	log.Printf("🟡 Collecting stakes from %d players (including bots)", len(telegramIDs))
+	
+	// ✅ DEBUG: Log all reserved cards
+	log.Printf("🔍 Reserved cards: %v", state.ReservedCards)
+	log.Printf("🔍 User cards: %v", state.UserCards)
 
 	// ✅ OPTIMIZATION 1: Batch fetch all users in one query
 	var telegramIDList []int64
@@ -42,6 +47,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	userMap := make(map[int64]*models.User)
 	for i := range users {
 		userMap[users[i].TelegramID] = &users[i]
+		log.Printf("  📌 User %d: IsBot=%v, Balance=%.2f", users[i].TelegramID, users[i].IsBot, users[i].Balance)
 	}
 
 	tx := e.db.Begin()
@@ -72,12 +78,15 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	for telegramID := range telegramIDs {
 		user, exists := userMap[telegramID]
 		if !exists {
-			log.Printf("⚠️ User %d not found, skipping", telegramID)
+			log.Printf("⚠️ User %d not found in database, skipping", telegramID)
 			continue
 		}
 
 		cardCount := len(state.UserCards[telegramID])
 		totalStake := float64(cardCount) * StakeAmount
+
+		log.Printf("  📊 User %d: cards=%d, stake=%.2f, IsBot=%v", 
+			telegramID, cardCount, totalStake, user.IsBot)
 
 		playerData := PlayerData{
 			User:       user,
@@ -95,6 +104,8 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			realPlayerCount++
 		}
 	}
+
+	log.Printf("📊 Found %d real players and %d bot players", realPlayerCount, botPlayerCount)
 
 	// ✅ OPTIMIZATION 3: Process bots in bulk (no balance deduction)
 	if len(botPlayers) > 0 {
@@ -357,10 +368,13 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	log.Printf("📊 Game has %d real players and %d bot players", realPlayerCount, botPlayerCount)
 	log.Printf("💰 Total pool including bots: %.2f ETB", totalPool)
 
-	// ✅ Handle no real players
-	if realPlayerCount == 0 {
-		log.Printf("⚠️ No real players in the game, but total pool is %.2f ETB (all bots)", totalPool)
+	// ✅ ALLOW GAME TO START EVEN WITH NO REAL PLAYERS
+	// This is useful for testing/demo purposes
+	if realPlayerCount == 0 && botPlayerCount > 0 {
+		log.Printf("🎮 No real players, but %d bots are playing. Starting bot-only game for testing/demo!", botPlayerCount)
+		log.Printf("💰 Total pool: %.2f ETB (all bots)", totalPool)
 		
+		// Still update the game with the pool
 		state.Game.TotalPool = totalPool
 		if err := tx.Save(state.Game).Error; err != nil {
 			tx.Rollback()
@@ -371,6 +385,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			return fmt.Errorf("failed to commit transaction: %w", err)
 		}
 		
+		// ✅ Broadcast the pool update with bot-only pool
 		e.broadcast(GameEvent{
 			Type:      "pool.update",
 			GameID:    state.Game.ID.String(),
@@ -380,10 +395,21 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			Message:   fmt.Sprintf("💰 Total pool: %.2f ETB (bots only)", totalPool),
 		})
 		
-		return fmt.Errorf("no real players found, game cancelled (pool: %.2f ETB)", totalPool)
+		// ✅ Return nil to allow game to start
+		return nil
 	}
 
-	// ✅ Update the game's total pool
+	// ✅ No players at all (should not happen)
+	if realPlayerCount == 0 && botPlayerCount == 0 {
+		log.Println("⚠️ No players found, cancelling game...")
+		tx.Rollback()
+		return fmt.Errorf("no players found")
+	}
+
+	// ✅ REAL PLAYERS FOUND - Continue with game start
+	log.Printf("✅ Found %d real players and %d bots, game will start!", realPlayerCount, botPlayerCount)
+
+	// Update the game's total pool
 	state.Game.TotalPool = totalPool
 	if err := tx.Save(state.Game).Error; err != nil {
 		tx.Rollback()
