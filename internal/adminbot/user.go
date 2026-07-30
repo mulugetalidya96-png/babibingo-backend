@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -26,7 +25,7 @@ func (b *Bot) handleUsers(ctx context.Context, chatID int64, args []string) {
 
 func (b *Bot) showUsersMenu(ctx context.Context, chatID int64) {
 	log.Printf("🔵 showUsersMenu called for chatID: %d", chatID)
-	
+
 	text := "👥 *User Management*\n\n" +
 		"Select an action below:\n\n" +
 		"🔍 *Search* - Find users by phone/username\n" +
@@ -57,7 +56,7 @@ func (b *Bot) showUsersMenu(ctx context.Context, chatID int64) {
 
 func (b *Bot) handleAddBalanceFlow(ctx context.Context, chatID int64) {
 	log.Printf("🔵 handleAddBalanceFlow called for chatID: %d", chatID)
-	
+
 	b.sendMarkdown(ctx, chatID,
 		"💰 *Add Balance*\n\n"+
 			"Please enter the phone number or username of the user:\n\n"+
@@ -73,7 +72,7 @@ func (b *Bot) handleAddBalanceFlow(ctx context.Context, chatID int64) {
 
 func (b *Bot) handleDeductBalanceFlow(ctx context.Context, chatID int64) {
 	log.Printf("🔵 handleDeductBalanceFlow called for chatID: %d", chatID)
-	
+
 	b.sendMarkdown(ctx, chatID,
 		"💰 *Deduct Balance*\n\n"+
 			"Please enter the phone number or username of the user:\n\n"+
@@ -89,11 +88,11 @@ func (b *Bot) handleDeductBalanceFlow(ctx context.Context, chatID int64) {
 
 func (b *Bot) handleSearchAndAddBalance(ctx context.Context, chatID int64, query string) {
 	log.Printf("🔵 handleSearchAndAddBalance called with query: '%s' for chatID: %d", query, chatID)
-	
+
 	// Search for the user
 	users := b.findUsersByQuery(ctx, query)
 	log.Printf("🔵 findUsersByQuery returned %d users", len(users))
-	
+
 	if len(users) == 0 {
 		log.Printf("🔴 No users found for query: '%s'", query)
 		b.sendMarkdown(ctx, chatID, fmt.Sprintf(
@@ -104,17 +103,17 @@ func (b *Bot) handleSearchAndAddBalance(ctx context.Context, chatID int64, query
 		b.tempState.Delete(chatID)
 		return
 	}
-	
+
 	if len(users) > 1 {
 		log.Printf("🔵 Multiple users found (%d), showing selection", len(users))
 		b.showUserSelectionForAddBalance(ctx, chatID, users)
 		return
 	}
-	
+
 	// Single user found, ask for amount
 	user := users[0]
 	log.Printf("🔵 Single user found: @%s (ID: %d)", user.Username, user.TelegramID)
-	
+
 	b.sendMarkdown(ctx, chatID, fmt.Sprintf(
 		"💰 *Add Balance*\n\n"+
 			"👤 User: @%s\n"+
@@ -128,7 +127,7 @@ func (b *Bot) handleSearchAndAddBalance(ctx context.Context, chatID int64, query
 		formatPhoneNumber(user.PhoneNumber),
 		user.Balance,
 	))
-	
+
 	stateKey := fmt.Sprintf("awaiting_add_balance_amount_%d", user.TelegramID)
 	b.tempState.Store(chatID, stateKey)
 	log.Printf("🔵 State stored: %s for chatID: %d", stateKey, chatID)
@@ -138,11 +137,11 @@ func (b *Bot) handleSearchAndAddBalance(ctx context.Context, chatID int64, query
 
 func (b *Bot) handleSearchAndDeductBalance(ctx context.Context, chatID int64, query string) {
 	log.Printf("🔵 handleSearchAndDeductBalance called with query: '%s' for chatID: %d", query, chatID)
-	
+
 	// Search for the user
 	users := b.findUsersByQuery(ctx, query)
 	log.Printf("🔵 findUsersByQuery returned %d users", len(users))
-	
+
 	if len(users) == 0 {
 		log.Printf("🔴 No users found for query: '%s'", query)
 		b.sendMarkdown(ctx, chatID, fmt.Sprintf(
@@ -153,17 +152,17 @@ func (b *Bot) handleSearchAndDeductBalance(ctx context.Context, chatID int64, qu
 		b.tempState.Delete(chatID)
 		return
 	}
-	
+
 	if len(users) > 1 {
 		log.Printf("🔵 Multiple users found (%d), showing selection", len(users))
 		b.showUserSelectionForDeductBalance(ctx, chatID, users)
 		return
 	}
-	
+
 	// Single user found, ask for amount
 	user := users[0]
 	log.Printf("🔵 Single user found: @%s (ID: %d)", user.Username, user.TelegramID)
-	
+
 	b.sendMarkdown(ctx, chatID, fmt.Sprintf(
 		"💰 *Deduct Balance*\n\n"+
 			"👤 User: @%s\n"+
@@ -177,7 +176,7 @@ func (b *Bot) handleSearchAndDeductBalance(ctx context.Context, chatID int64, qu
 		formatPhoneNumber(user.PhoneNumber),
 		user.Balance,
 	))
-	
+
 	stateKey := fmt.Sprintf("awaiting_deduct_balance_amount_%d", user.TelegramID)
 	b.tempState.Store(chatID, stateKey)
 	log.Printf("🔵 State stored: %s for chatID: %d", stateKey, chatID)
@@ -187,10 +186,10 @@ func (b *Bot) handleSearchAndDeductBalance(ctx context.Context, chatID int64, qu
 
 func (b *Bot) showUserSelectionForAddBalance(ctx context.Context, chatID int64, users []models.User) {
 	log.Printf("🔵 showUserSelectionForAddBalance called with %d users", len(users))
-	
+
 	text := "🔍 *Multiple users found*\n\n" +
 		"Please select a user:\n\n"
-	
+
 	for i, user := range users {
 		if i >= 10 {
 			break
@@ -204,9 +203,9 @@ func (b *Bot) showUserSelectionForAddBalance(ctx context.Context, chatID int64, 
 			user.TelegramID,
 		)
 	}
-	
+
 	text += "\n💡 *Tip:* Type the exact Telegram ID to select a user."
-	
+
 	b.sendMarkdown(ctx, chatID, text)
 	b.tempState.Store(chatID, "awaiting_add_balance_user_selection")
 	log.Printf("🔵 State stored: awaiting_add_balance_user_selection for chatID: %d", chatID)
@@ -216,10 +215,10 @@ func (b *Bot) showUserSelectionForAddBalance(ctx context.Context, chatID int64, 
 
 func (b *Bot) showUserSelectionForDeductBalance(ctx context.Context, chatID int64, users []models.User) {
 	log.Printf("🔵 showUserSelectionForDeductBalance called with %d users", len(users))
-	
+
 	text := "🔍 *Multiple users found*\n\n" +
 		"Please select a user:\n\n"
-	
+
 	for i, user := range users {
 		if i >= 10 {
 			break
@@ -233,95 +232,19 @@ func (b *Bot) showUserSelectionForDeductBalance(ctx context.Context, chatID int6
 			user.TelegramID,
 		)
 	}
-	
+
 	text += "\n💡 *Tip:* Type the exact Telegram ID to select a user."
-	
+
 	b.sendMarkdown(ctx, chatID, text)
 	b.tempState.Store(chatID, "awaiting_deduct_balance_user_selection")
 	log.Printf("🔵 State stored: awaiting_deduct_balance_user_selection for chatID: %d", chatID)
-}
-
-// ============ FIND USERS BY QUERY ============
-
-func (b *Bot) findUsersByQuery(ctx context.Context, query string) []models.User {
-	log.Printf("🔵 findUsersByQuery called with query: '%s'", query)
-	
-	var users []models.User
-	
-	// Format the query
-	formattedQuery := b.formatSearchQuery(query)
-	log.Printf("🔵 Formatted query: '%s'", formattedQuery)
-	
-	// Try exact phone number match (both with and without +)
-	if formattedQuery != "" {
-		log.Printf("🔵 Trying exact phone number match with: '%s'", formattedQuery)
-		
-		// Try with + prefix
-		b.db.Where("phone_number = ?", formattedQuery).
-			Where("is_bot = ?", false).
-			Find(&users)
-		if len(users) > 0 {
-			log.Printf("✅ Found %d user(s) with exact match: '%s'", len(users), formattedQuery)
-			return users
-		}
-		
-		// Try without + prefix (for database entries without +)
-		phoneWithoutPlus := strings.TrimPrefix(formattedQuery, "+")
-		log.Printf("🔵 Trying without + prefix: '%s'", phoneWithoutPlus)
-		b.db.Where("phone_number = ?", phoneWithoutPlus).
-			Where("is_bot = ?", false).
-			Find(&users)
-		if len(users) > 0 {
-			log.Printf("✅ Found %d user(s) without + prefix: '%s'", len(users), phoneWithoutPlus)
-			return users
-		}
-		
-		// Try with + prefix if the database has it
-		if !strings.HasPrefix(formattedQuery, "+") {
-			phoneWithPlus := "+" + formattedQuery
-			log.Printf("🔵 Trying with + prefix: '%s'", phoneWithPlus)
-			b.db.Where("phone_number = ?", phoneWithPlus).
-				Where("is_bot = ?", false).
-				Find(&users)
-			if len(users) > 0 {
-				log.Printf("✅ Found %d user(s) with + prefix: '%s'", len(users), phoneWithPlus)
-				return users
-			}
-		}
-	}
-	
-	// Try partial phone match (search for the number without +)
-	if formattedQuery != "" {
-		searchPhone := strings.TrimPrefix(formattedQuery, "+")
-		log.Printf("🔵 Trying partial phone match with: '%%%s%%'", searchPhone)
-		b.db.Where("phone_number ILIKE ?", "%"+searchPhone+"%").
-			Where("is_bot = ?", false).
-			Find(&users)
-		if len(users) > 0 {
-			log.Printf("✅ Found %d user(s) with partial phone match: '%s'", len(users), searchPhone)
-			return users
-		}
-	}
-	
-	// Try username or name search
-	searchPattern := "%" + strings.TrimPrefix(query, "@") + "%"
-	log.Printf("🔵 Trying username/name search with pattern: '%s'", searchPattern)
-	b.db.Where("username ILIKE ? OR first_name ILIKE ? OR last_name ILIKE ?",
-		searchPattern, searchPattern, searchPattern).
-		Where("is_bot = ?", false).
-		Order("created_at DESC").
-		Limit(20).
-		Find(&users)
-	
-	log.Printf("🔵 Username/name search returned %d users", len(users))
-	return users
 }
 
 // ============ LIST USERS ============
 
 func (b *Bot) listUsers(ctx context.Context, chatID int64, page int) {
 	log.Printf("🔵 listUsers called for chatID: %d, page: %d", chatID, page)
-	
+
 	limit := 10
 	offset := (page - 1) * limit
 
@@ -376,17 +299,17 @@ func (b *Bot) listUsers(ctx context.Context, chatID int64, page int) {
 	navRow := []telego.InlineKeyboardButton{}
 	if page > 1 {
 		navRow = append(navRow, telego.InlineKeyboardButton{
-			Text: "⬅️ Prev",
+			Text:         "⬅️ Prev",
 			CallbackData: fmt.Sprintf("users_page_%d", page-1),
 		})
 	}
 	navRow = append(navRow, telego.InlineKeyboardButton{
-		Text: fmt.Sprintf("%d/%d", page, totalPages),
+		Text:         fmt.Sprintf("%d/%d", page, totalPages),
 		CallbackData: "users_current",
 	})
 	if page < totalPages {
 		navRow = append(navRow, telego.InlineKeyboardButton{
-			Text: "Next ➡️",
+			Text:         "Next ➡️",
 			CallbackData: fmt.Sprintf("users_page_%d", page+1),
 		})
 	}
@@ -403,15 +326,15 @@ func (b *Bot) listUsers(ctx context.Context, chatID int64, page int) {
 
 func (b *Bot) searchUsersSmart(ctx context.Context, chatID int64, query string) {
 	log.Printf("🔵 searchUsersSmart called with query: '%s' for chatID: %d", query, chatID)
-	
+
 	users := b.findUsersByQuery(ctx, query)
-	
+
 	if len(users) == 0 {
 		log.Printf("🔴 No users found for query: '%s'", query)
 		b.showNoResultsFound(ctx, chatID, query)
 		return
 	}
-	
+
 	b.showSearchResults(ctx, chatID, query, users)
 }
 
@@ -419,7 +342,7 @@ func (b *Bot) searchUsersSmart(ctx context.Context, chatID int64, query string) 
 
 func (b *Bot) showSearchResults(ctx context.Context, chatID int64, query string, users []models.User) {
 	log.Printf("🔵 showSearchResults called with %d users for query: '%s'", len(users), query)
-	
+
 	text := fmt.Sprintf("🔍 *Search Results for '%s'*\n", query)
 	text += fmt.Sprintf("📊 Found: %d user(s)\n\n", len(users))
 
@@ -470,7 +393,7 @@ func (b *Bot) showSearchResults(ctx context.Context, chatID int64, query string,
 
 func (b *Bot) showNoResultsFound(ctx context.Context, chatID int64, query string) {
 	log.Printf("🔵 showNoResultsFound for query: '%s'", query)
-	
+
 	displayQuery := query
 	if isPhoneNumberLike(query) {
 		displayQuery = formatPhoneNumber(query)
@@ -503,7 +426,7 @@ func (b *Bot) showNoResultsFound(ctx context.Context, chatID int64, query string
 
 func (b *Bot) viewUser(ctx context.Context, chatID int64, telegramID int64) {
 	log.Printf("🔵 viewUser called for telegramID: %d", telegramID)
-	
+
 	var user models.User
 	if err := b.db.Where("telegram_id = ?", telegramID).First(&user).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -641,7 +564,7 @@ func (b *Bot) viewUser(ctx context.Context, chatID int64, telegramID int64) {
 
 func (b *Bot) showUserStats(ctx context.Context, chatID int64) {
 	log.Printf("🔵 showUserStats called for chatID: %d", chatID)
-	
+
 	var totalUsers int64
 	var totalAgents int64
 	var totalBots int64
@@ -705,7 +628,7 @@ func (b *Bot) showUserStats(ctx context.Context, chatID int64) {
 
 func (b *Bot) showUserTransactions(ctx context.Context, chatID int64, telegramID int64) {
 	log.Printf("🔵 showUserTransactions called for telegramID: %d", telegramID)
-	
+
 	var user models.User
 	if err := b.db.Where("telegram_id = ?", telegramID).First(&user).Error; err != nil {
 		b.sendText(ctx, chatID, "❌ User not found.")
@@ -777,7 +700,7 @@ func (b *Bot) showUserTransactions(ctx context.Context, chatID int64, telegramID
 
 func (b *Bot) showUserFullStats(ctx context.Context, chatID int64, telegramID int64) {
 	log.Printf("🔵 showUserFullStats called for telegramID: %d", telegramID)
-	
+
 	var user models.User
 	if err := b.db.Where("telegram_id = ?", telegramID).First(&user).Error; err != nil {
 		b.sendText(ctx, chatID, "❌ User not found.")
@@ -875,116 +798,11 @@ func (b *Bot) showUserFullStats(ctx context.Context, chatID int64, telegramID in
 	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
 }
 
-// ============ FORMAT SEARCH QUERY ============
-
-func (b *Bot) formatSearchQuery(query string) string {
-	log.Printf("🔵 formatSearchQuery called with: '%s'", query)
-	
-	query = strings.TrimSpace(query)
-	query = strings.TrimPrefix(query, "@")
-
-	if isPhoneNumberLike(query) {
-		formatted := formatPhoneNumber(query)
-		log.Printf("🔵 formatSearchQuery: phone number detected, formatted to: '%s'", formatted)
-		return formatted
-	}
-
-	log.Printf("🔵 formatSearchQuery: returning as-is: '%s'", query)
-	return query
-}
-
-// ============ PHONE NUMBER FORMATTING ============
-
-func formatPhoneNumber(phone string) string {
-	if phone == "" {
-		return "Not set"
-	}
-
-	re := regexp.MustCompile(`[^0-9+]`)
-	phone = re.ReplaceAllString(phone, "")
-
-	if strings.HasPrefix(phone, "0") {
-		phone = phone[1:]
-	}
-
-	phone = strings.TrimPrefix(phone, "+")
-
-	if strings.HasPrefix(phone, "251") {
-		return "+" + phone
-	}
-
-	if strings.HasPrefix(phone, "9") && len(phone) == 9 {
-		return "+251" + phone
-	}
-
-	if len(phone) == 10 && strings.HasPrefix(phone, "9") {
-		return "+251" + phone
-	}
-
-	if len(phone) == 9 {
-		return "+251" + phone
-	}
-
-	if !strings.HasPrefix(phone, "251") && len(phone) > 0 {
-		return "+251" + phone
-	}
-
-	return "+" + phone
-}
-
-// ============ PHONE VARIATIONS ============
-
-func (b *Bot) getPhoneVariations(phone string) []string {
-	clean := regexp.MustCompile(`[^0-9]`).ReplaceAllString(phone, "")
-	variations := []string{}
-
-	if strings.HasPrefix(clean, "0") {
-		clean = clean[1:]
-	}
-
-	if strings.HasPrefix(clean, "251") {
-		variations = append(variations, "+"+clean)
-		variations = append(variations, clean)
-		variations = append(variations, "0"+clean[3:])
-	} else if strings.HasPrefix(clean, "9") && len(clean) == 9 {
-		variations = append(variations, "+251"+clean)
-		variations = append(variations, "251"+clean)
-		variations = append(variations, "0"+clean)
-	} else {
-		variations = append(variations, "+251"+clean)
-		variations = append(variations, "251"+clean)
-		variations = append(variations, "0"+clean)
-	}
-
-	return variations
-}
-
-// ============ CHECK IF PHONE NUMBER ============
-
-func isPhoneNumberLike(text string) bool {
-	clean := regexp.MustCompile(`[^0-9+]`).ReplaceAllString(text, "")
-
-	digitCount := 0
-	for _, char := range clean {
-		if char >= '0' && char <= '9' {
-			digitCount++
-		}
-	}
-
-	return digitCount >= 8
-}
-
-// ============ SEARCH USERS ============
-
-func (b *Bot) searchUsers(ctx context.Context, chatID int64, query string) {
-	b.searchUsersSmart(ctx, chatID, query)
-}
-
 // ============ ADD BALANCE ============
 
 func (b *Bot) addBalance(ctx context.Context, chatID int64, telegramID int64, amount float64) {
 	log.Printf("🔵 addBalance called: userID=%d, amount=%.2f", telegramID, amount)
-	
+
 	if amount <= 0 {
 		b.sendText(ctx, chatID, "❌ Amount must be greater than 0")
 		return
@@ -996,7 +814,7 @@ func (b *Bot) addBalance(ctx context.Context, chatID int64, telegramID int64, am
 
 func (b *Bot) deductBalance(ctx context.Context, chatID int64, telegramID int64, amount float64) {
 	log.Printf("🔵 deductBalance called: userID=%d, amount=%.2f", telegramID, amount)
-	
+
 	if amount <= 0 {
 		b.sendText(ctx, chatID, "❌ Amount must be greater than 0")
 		return
@@ -1029,7 +847,7 @@ func (b *Bot) deductBalance(ctx context.Context, chatID int64, telegramID int64,
 
 func (b *Bot) adjustBalance(ctx context.Context, chatID int64, telegramID int64, amount float64) {
 	log.Printf("🔵 adjustBalance called: userID=%d, amount=%.2f", telegramID, amount)
-	
+
 	var user models.User
 	if err := b.db.Where("telegram_id = ?", telegramID).First(&user).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -1119,7 +937,7 @@ func (b *Bot) adjustBalance(ctx context.Context, chatID int64, telegramID int64,
 
 func (b *Bot) suspendUser(ctx context.Context, chatID int64, telegramID int64) {
 	log.Printf("🔵 suspendUser called for telegramID: %d", telegramID)
-	
+
 	b.sendMarkdown(ctx, chatID, fmt.Sprintf(
 		"⏳ *User Suspension*\n\n"+
 			"User `%d` has been suspended.\n\n"+
@@ -1133,7 +951,7 @@ func (b *Bot) suspendUser(ctx context.Context, chatID int64, telegramID int64) {
 
 func (b *Bot) unsuspendUser(ctx context.Context, chatID int64, telegramID int64) {
 	log.Printf("🔵 unsuspendUser called for telegramID: %d", telegramID)
-	
+
 	b.sendMarkdown(ctx, chatID, fmt.Sprintf(
 		"✅ *User Unsuspended*\n\n"+
 			"User `%d` has been unsuspended.",
@@ -1162,7 +980,7 @@ func (b *Bot) getHighestBalance() float64 {
 
 func (b *Bot) handleUserTextInput(ctx context.Context, chatID int64, text string) {
 	log.Printf("🔵 handleUserTextInput called for chatID: %d, text: '%s'", chatID, text)
-	
+
 	if state, ok := b.tempState.Load(chatID); ok {
 		stateStr := state.(string)
 		log.Printf("🔵 Current state for chatID %d: '%s'", chatID, stateStr)
@@ -1236,6 +1054,80 @@ func (b *Bot) handleUserTextInput(ctx context.Context, chatID int64, text string
 			log.Printf("🔵 Deducting balance: userID=%d, amount=%.2f", userID, amount)
 			b.tempState.Delete(chatID)
 			b.deductBalance(ctx, chatID, userID, amount)
+			return
+		}
+
+		// Add balance - user selection
+		if stateStr == "awaiting_add_balance_user_selection" {
+			log.Printf("🔵 Handling awaiting_add_balance_user_selection state")
+			userID, err := strconv.ParseInt(text, 10, 64)
+			if err != nil {
+				log.Printf("🔴 Invalid user ID: '%s'", text)
+				b.sendText(ctx, chatID, "❌ Invalid user ID. Please type a valid Telegram ID.")
+				return
+			}
+
+			// Find the user
+			var user models.User
+			if err := b.db.Where("telegram_id = ?", userID).First(&user).Error; err != nil {
+				b.sendText(ctx, chatID, "❌ User not found.")
+				b.tempState.Delete(chatID)
+				return
+			}
+
+			b.tempState.Delete(chatID)
+			// Now ask for amount
+			b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+				"💰 *Add Balance*\n\n"+
+					"👤 User: @%s\n"+
+					"🆔 `%d`\n"+
+					"📱 %s\n"+
+					"💰 Current Balance: %.2f ETB\n\n"+
+					"Enter the amount to add:\n\n"+
+					"📌 Example: `100` or `50.5`",
+				user.Username,
+				user.TelegramID,
+				formatPhoneNumber(user.PhoneNumber),
+				user.Balance,
+			))
+			b.tempState.Store(chatID, fmt.Sprintf("awaiting_add_balance_amount_%d", user.TelegramID))
+			return
+		}
+
+		// Deduct balance - user selection
+		if stateStr == "awaiting_deduct_balance_user_selection" {
+			log.Printf("🔵 Handling awaiting_deduct_balance_user_selection state")
+			userID, err := strconv.ParseInt(text, 10, 64)
+			if err != nil {
+				log.Printf("🔴 Invalid user ID: '%s'", text)
+				b.sendText(ctx, chatID, "❌ Invalid user ID. Please type a valid Telegram ID.")
+				return
+			}
+
+			// Find the user
+			var user models.User
+			if err := b.db.Where("telegram_id = ?", userID).First(&user).Error; err != nil {
+				b.sendText(ctx, chatID, "❌ User not found.")
+				b.tempState.Delete(chatID)
+				return
+			}
+
+			b.tempState.Delete(chatID)
+			// Now ask for amount
+			b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+				"💰 *Deduct Balance*\n\n"+
+					"👤 User: @%s\n"+
+					"🆔 `%d`\n"+
+					"📱 %s\n"+
+					"💰 Current Balance: %.2f ETB\n\n"+
+					"Enter the amount to deduct:\n\n"+
+					"📌 Example: `100` or `50.5`",
+				user.Username,
+				user.TelegramID,
+				formatPhoneNumber(user.PhoneNumber),
+				user.Balance,
+			))
+			b.tempState.Store(chatID, fmt.Sprintf("awaiting_deduct_balance_amount_%d", user.TelegramID))
 			return
 		}
 	} else {
