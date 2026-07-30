@@ -75,9 +75,17 @@ func (bm *BotManager) loadDesiredCount() {
 // saveDesiredCount - Save to database
 func (bm *BotManager) saveDesiredCount() {
 	count := int(atomic.LoadInt32(&bm.desiredCount))
-	err := bm.engine.db.Model(&models.RobotBotSettings{}).First(&models.RobotBotSettings{}).
-		Update("desired_count", count).Error
-	if err != nil {
+
+	var settings models.RobotBotSettings
+	if err := bm.engine.db.First(&settings).Error; err != nil {
+		log.Printf("⚠️ Failed to load bot settings: %v", err)
+		return
+	}
+
+	settings.DesiredCount = count
+	settings.UpdatedAt = time.Now()
+
+	if err := bm.engine.db.Save(&settings).Error; err != nil {
 		log.Printf("⚠️ Failed to save desired bot count: %v", err)
 	}
 }
@@ -88,7 +96,7 @@ func (bm *BotManager) SetDesiredCount(count int) {
 		count = 0
 	}
 	if count > 100 {
-		count = 100
+		count = 200
 	}
 	atomic.StoreInt32(&bm.desiredCount, int32(count))
 
