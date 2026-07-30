@@ -71,11 +71,13 @@ func (e *Engine) StopBots() {
 }
 // GetCurrentGame returns the current game state
 func (e *Engine) GetCurrentGame() (*models.Game, int, int, float64, float64, float64, error) {
-	if e.currentGame == nil {
-		return nil, 0, 0, 0, 0, 0, fmt.Errorf("no active game")
+	state := e.GetCurrentGameState()
+
+	if state == nil {
+		return nil,0,0,0,0,0,fmt.Errorf("no active game")
 	}
 
-	state := e.currentGame
+	
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
@@ -101,11 +103,13 @@ func (e *Engine) GetGameStatus() (string, error) {
 
 // GetGameState returns the game state for a user
 func (e *Engine) GetGameState(userID int64) (*GameStateResponse, error) {
-	if e.currentGame == nil {
-		return nil, fmt.Errorf("no active game")
-	}
+	state := e.GetCurrentGameState()
 
-	state := e.currentGame
+if state == nil {
+	return nil, fmt.Errorf("no active game")
+}
+
+	
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
@@ -155,12 +159,14 @@ func (e *Engine) GetGameStats() map[string]interface{} {
 
     stats := make(map[string]interface{})
     
-    if e.currentGame == nil {
-        stats["has_active_game"] = false
-        return stats
-    }
+   state := e.GetCurrentGameState()
 
-    state := e.currentGame
+if state == nil {
+	stats["has_active_game"] = false
+	return stats
+}
+
+    
     stats["has_active_game"] = true
     stats["game_id"] = state.Game.ID.String()
     stats["status"] = state.Game.Status
@@ -209,3 +215,17 @@ func (e *Engine) GetTotalPoolAllGames() float64 {
 // In engine.go - Add this helper to send error events to frontend
 
 // sendError sends an error event to the frontend
+// GetCurrentGameState safely returns current game
+func (e *Engine) GetCurrentGameState() *GameState {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	return e.currentGame
+}
+// SetCurrentGame safely updates current game
+func (e *Engine) SetCurrentGame(state *GameState) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.currentGame = state
+}
