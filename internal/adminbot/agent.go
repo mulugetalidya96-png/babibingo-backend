@@ -4,299 +4,1045 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"babibingo/internal/models"
 
 	"github.com/mymmrac/telego"
+	"gorm.io/gorm"
 )
 
-func (b *Bot) handleAgents(ctx context.Context, chatID int64, args []string) {
-    if len(args) == 0 {
-        b.showPendingAgents(ctx, chatID)
-        return
-    }
+// ============ AGENT MANAGEMENT HANDLER ============
 
-    switch args[0] {
-    case "pending":
-        b.showPendingAgents(ctx, chatID)
-    case "all":
-        b.showAllAgents(ctx, chatID)
-    case "approve":
-        if len(args) > 1 {
-            id, _ := strconv.Atoi(args[1])
-            b.approveAgent(ctx, chatID, uint(id))
-        }
-    case "reject":
-        if len(args) > 1 {
-            id, _ := strconv.Atoi(args[1])
-            b.rejectAgent(ctx, chatID, uint(id))
-        }
-    case "view":
-        if len(args) > 1 {
-            id, _ := strconv.Atoi(args[1])
-            b.viewAgent(ctx, chatID, uint(id))
-        }
-    case "revoke":
-        if len(args) > 1 {
-            id, _ := strconv.Atoi(args[1])
-            b.revokeAgent(ctx, chatID, int64(id))
-        }
-    case "commissions":
-        b.showAgentCommissions(ctx, chatID)
-    default:
-        b.sendText(ctx, chatID, "❌ Usage: /agents [pending|all|approve <id>|reject <id>|view <id>|revoke <id>|commissions]")
-    }
+func (b *Bot) handleAgents(ctx context.Context, chatID int64, args []string) {
+	if len(args) == 0 {
+		b.showAgentsMenu(ctx, chatID)
+		return
+	}
+
+	switch args[0] {
+	case "menu":
+		b.showAgentsMenu(ctx, chatID)
+		
+	case "pending":
+		b.showPendingAgents(ctx, chatID)
+		
+	case "all":
+		b.showAllAgents(ctx, chatID)
+		
+	case "add":
+		// Flow: /agents add -> search user -> add as agent
+		b.handleAddAgentFlow(ctx, chatID)
+		
+	case "remove":
+		// Flow: /agents remove -> search user -> remove agent status
+		if len(args) > 1 {
+			query := strings.Join(args[1:], " ")
+			b.handleRemoveAgentSearch(ctx, chatID, query)
+		} else {
+			b.handleRemoveAgentFlow(ctx, chatID)
+		}
+		
+	case "search":
+		if len(args) > 1 {
+			query := strings.Join(args[1:], " ")
+			b.searchAgents(ctx, chatID, query)
+		} else {
+			b.sendText(ctx, chatID, "❌ Usage: /agents search <username or phone>")
+		}
+		
+	case "approve":
+		if len(args) > 1 {
+			id, _ := strconv.Atoi(args[1])
+			b.approveAgent(ctx, chatID, uint(id))
+		} else {
+			b.sendText(ctx, chatID, "❌ Usage: /agents approve <request_id>")
+		}
+		
+	case "reject":
+		if len(args) > 1 {
+			id, _ := strconv.Atoi(args[1])
+			b.rejectAgent(ctx, chatID, uint(id))
+		} else {
+			b.sendText(ctx, chatID, "❌ Usage: /agents reject <request_id>")
+		}
+		
+	case "view":
+		if len(args) > 1 {
+			id, _ := strconv.Atoi(args[1])
+			b.viewAgent(ctx, chatID, uint(id))
+		} else {
+			b.sendText(ctx, chatID, "❌ Usage: /agents view <request_id>")
+		}
+		
+	case "revoke":
+		if len(args) > 1 {
+			id, _ := strconv.ParseInt(args[1], 10, 64)
+			b.revokeAgent(ctx, chatID, id)
+		} else {
+			b.sendText(ctx, chatID, "❌ Usage: /agents revoke <user_id>")
+		}
+		
+	case "commissions":
+		b.showAgentCommissions(ctx, chatID)
+		
+	default:
+		b.showAgentsMenu(ctx, chatID)
+	}
 }
+
+// ============ SHOW AGENTS MENU ============
+
+func (b *Bot) showAgentsMenu(ctx context.Context, chatID int64) {
+	// Get counts
+	var pendingCount int64
+	b.db.Model(&AgentRequest{}).Where("status = ?", "pending").Count(&pendingCount)
+	
+	var totalAgents int64
+	b.db.Model(&models.User{}).Where("is_agent = ?", true).Count(&totalAgents)
+	
+	text := fmt.Sprintf(
+		"🤝 *Agent Management*\n\n"+
+		"📊 Overview:\n"+
+		"• Total Agents: %d\n"+
+		"• Pending Requests: %d\n\n"+
+		"Select an action below:",
+		totalAgents,
+		pendingCount,
+	)
+	
+	keyboard := [][]telego.InlineKeyboardButton{
+		{
+			{Text: "➕ Add Agent", CallbackData: "agents_add"},
+			{Text: "➖ Remove Agent", CallbackData: "agents_remove"},
+		},
+		{
+			{Text: "📋 Pending Requests", CallbackData: "agents_pending"},
+			{Text: "👥 All Agents", CallbackData: "agents_all"},
+		},
+		{
+			{Text: "🔍 Search Agents", CallbackData: "agents_search"},
+			{Text: "💰 Commissions", CallbackData: "agents_commissions"},
+		},
+		{
+			{Text: "🔙 Back to Menu", CallbackData: "back_to_main"},
+		},
+	}
+	
+	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+}
+
+// ============ ADD AGENT FLOW ============
+
+func (b *Bot) handleAddAgentFlow(ctx context.Context, chatID int64) {
+	b.sendMarkdown(ctx, chatID,
+		"🤝 *Add Agent*\n\n"+
+		"Please enter the phone number or username of the user to make an agent:\n\n"+
+		"📱 Examples:\n"+
+		"• `09847488474` (will auto-format to +2519847488474)\n"+
+		"• `@username`\n\n"+
+		"⌨️ Type the phone number or username:")
+	b.tempState.Store(chatID, "awaiting_add_agent_search")
+}
+
+// ============ REMOVE AGENT FLOW ============
+
+func (b *Bot) handleRemoveAgentFlow(ctx context.Context, chatID int64) {
+	b.sendMarkdown(ctx, chatID,
+		"🤝 *Remove Agent*\n\n"+
+		"Please enter the phone number or username of the agent to remove:\n\n"+
+		"📱 Examples:\n"+
+		"• `09847488474` (will auto-format to +2519847488474)\n"+
+		"• `@username`\n\n"+
+		"⌨️ Type the phone number or username:")
+	b.tempState.Store(chatID, "awaiting_remove_agent_search")
+}
+
+// ============ HANDLE SEARCH AND ADD AGENT ============
+
+func (b *Bot) handleSearchAndAddAgent(ctx context.Context, chatID int64, query string) {
+	users := b.findUsersByQuery(ctx, query)
+	
+	if len(users) == 0 {
+		b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+			"❌ No user found for: `%s`\n\n"+
+			"Please try again with a different phone number or username.",
+			query,
+		))
+		b.tempState.Delete(chatID)
+		return
+	}
+	
+	if len(users) > 1 {
+		b.showUserSelectionForAddAgent(ctx, chatID, users)
+		return
+	}
+	
+	// Single user found
+	user := users[0]
+	
+	// Check if already an agent
+	if user.IsAgent {
+		b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+			"⚠️ *User is Already an Agent*\n\n"+
+			"👤 User: @%s\n"+
+			"🆔 `%d`\n"+
+			"📱 %s\n"+
+			"💰 Agent Balance: %.2f ETB\n\n"+
+			"This user is already an agent. Use `/agents remove` to remove agent status.",
+			user.Username,
+			user.TelegramID,
+			formatPhoneNumber(user.PhoneNumber),
+			user.AgentBalance,
+		))
+		b.tempState.Delete(chatID)
+		return
+	}
+	
+	// Confirm add agent
+	b.confirmAddAgent(ctx, chatID, user)
+}
+
+// ============ CONFIRM ADD AGENT ============
+
+func (b *Bot) confirmAddAgent(ctx context.Context, chatID int64, user models.User) {
+	text := fmt.Sprintf(
+		"🤝 *Add Agent Confirmation*\n\n"+
+		"👤 User: @%s\n"+
+		"🆔 `%d`\n"+
+		"📱 %s\n"+
+		"💰 Balance: %.2f ETB\n\n"+
+		"⚠️ This user will become an agent and will be able to earn commissions.\n\n"+
+		"Are you sure you want to add this user as an agent?",
+		user.Username,
+		user.TelegramID,
+		formatPhoneNumber(user.PhoneNumber),
+		user.Balance,
+	)
+	
+	keyboard := [][]telego.InlineKeyboardButton{
+		{
+			{Text: "✅ Confirm Add", CallbackData: fmt.Sprintf("agents_confirm_add_%d", user.TelegramID)},
+			{Text: "❌ Cancel", CallbackData: "agents_menu"},
+		},
+	}
+	
+	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+	b.tempState.Delete(chatID)
+}
+
+// ============ HANDLE SEARCH AND REMOVE AGENT ============
+
+func (b *Bot) handleRemoveAgentSearch(ctx context.Context, chatID int64, query string) {
+	users := b.findUsersByQuery(ctx, query)
+	
+	if len(users) == 0 {
+		b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+			"❌ No user found for: `%s`\n\n"+
+			"Please try again with a different phone number or username.",
+			query,
+		))
+		b.tempState.Delete(chatID)
+		return
+	}
+	
+	if len(users) > 1 {
+		b.showUserSelectionForRemoveAgent(ctx, chatID, users)
+		return
+	}
+	
+	user := users[0]
+	
+	// Check if user is an agent
+	if !user.IsAgent {
+		b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+			"⚠️ *User is Not an Agent*\n\n"+
+			"👤 User: @%s\n"+
+			"🆔 `%d`\n"+
+			"📱 %s\n\n"+
+			"This user is not an agent. Use `/agents add` to add as agent.",
+			user.Username,
+			user.TelegramID,
+			formatPhoneNumber(user.PhoneNumber),
+		))
+		b.tempState.Delete(chatID)
+		return
+	}
+	
+	// Confirm remove agent
+	b.confirmRemoveAgent(ctx, chatID, user)
+}
+
+// ============ CONFIRM REMOVE AGENT ============
+
+func (b *Bot) confirmRemoveAgent(ctx context.Context, chatID int64, user models.User) {
+	var referralCount int64
+	b.db.Model(&models.User{}).Where("referred_by = ?", user.ID).Count(&referralCount)
+	
+	text := fmt.Sprintf(
+		"🤝 *Remove Agent Confirmation*\n\n"+
+		"👤 User: @%s\n"+
+		"🆔 `%d`\n"+
+		"📱 %s\n"+
+		"💰 Agent Balance: %.2f ETB\n"+
+		"👥 Referrals: %d\n\n"+
+		"⚠️ This will remove agent status from this user.\n"+
+		"⚠️ The user will no longer earn commissions.\n\n"+
+		"Are you sure you want to remove agent status?",
+		user.Username,
+		user.TelegramID,
+		formatPhoneNumber(user.PhoneNumber),
+		user.AgentBalance,
+		referralCount,
+	)
+	
+	keyboard := [][]telego.InlineKeyboardButton{
+		{
+			{Text: "✅ Confirm Remove", CallbackData: fmt.Sprintf("agents_confirm_remove_%d", user.TelegramID)},
+			{Text: "❌ Cancel", CallbackData: "agents_menu"},
+		},
+	}
+	
+	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+	b.tempState.Delete(chatID)
+}
+
+// ============ SHOW USER SELECTION FOR ADD AGENT ============
+
+func (b *Bot) showUserSelectionForAddAgent(ctx context.Context, chatID int64, users []models.User) {
+	text := "🔍 *Multiple users found*\n\nPlease select a user to add as agent:\n\n"
+	
+	for i, user := range users {
+		if i >= 10 {
+			break
+		}
+		status := ""
+		if user.IsAgent {
+			status = " ✅ Already Agent"
+		}
+		text += fmt.Sprintf(
+			"%d. @%s | 📱 %s | 💰 %.2f ETB%s\n🆔 `%d`\n\n",
+			i+1,
+			user.Username,
+			formatPhoneNumber(user.PhoneNumber),
+			user.Balance,
+			status,
+			user.TelegramID,
+		)
+	}
+	
+	text += "\n💡 *Tip:* Type the exact Telegram ID to select a user."
+	
+	b.sendMarkdown(ctx, chatID, text)
+	b.tempState.Store(chatID, "awaiting_add_agent_selection")
+}
+
+// ============ SHOW USER SELECTION FOR REMOVE AGENT ============
+
+func (b *Bot) showUserSelectionForRemoveAgent(ctx context.Context, chatID int64, users []models.User) {
+	text := "🔍 *Multiple users found*\n\nPlease select a user to remove as agent:\n\n"
+	
+	foundAgents := false
+	for i, user := range users {
+		if i >= 10 {
+			break
+		}
+		if user.IsAgent {
+			foundAgents = true
+			text += fmt.Sprintf(
+				"%d. @%s | 📱 %s | 💰 %.2f ETB\n🆔 `%d`\n\n",
+				i+1,
+				user.Username,
+				formatPhoneNumber(user.PhoneNumber),
+				user.AgentBalance,
+				user.TelegramID,
+			)
+		}
+	}
+	
+	if !foundAgents {
+		text = "🔍 *No agents found*\n\nNone of the users found are agents."
+		
+		keyboard := [][]telego.InlineKeyboardButton{
+			{{Text: "🔙 Back to Agents", CallbackData: "agents_menu"}},
+		}
+		b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+		b.tempState.Delete(chatID)
+		return
+	}
+	
+	text += "\n💡 *Tip:* Type the exact Telegram ID to select a user."
+	
+	b.sendMarkdown(ctx, chatID, text)
+	b.tempState.Store(chatID, "awaiting_remove_agent_selection")
+}
+
+// ============ EXECUTE ADD AGENT ============
+
+func (b *Bot) executeAddAgent(ctx context.Context, chatID int64, telegramID int64) {
+	var user models.User
+	if err := b.db.Where("telegram_id = ?", telegramID).First(&user).Error; err != nil {
+		b.sendText(ctx, chatID, "❌ User not found.")
+		return
+	}
+	
+	if user.IsAgent {
+		b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+			"⚠️ User @%s is already an agent.",
+			user.Username,
+		))
+		return
+	}
+	
+	// Update user to agent
+	user.IsAgent = true
+	user.AgentBalance = 0
+	if err := b.db.Save(&user).Error; err != nil {
+		b.sendText(ctx, chatID, "❌ Failed to add agent: "+err.Error())
+		return
+	}
+	
+	// Create agent request record if not exists
+	var request AgentRequest
+	result := b.db.Where("user_id = ?", user.TelegramID).First(&request)
+	if result.Error == gorm.ErrRecordNotFound {
+		request = AgentRequest{
+			UserID:      user.TelegramID,
+			Username:    user.Username,
+			FirstName:   user.FirstName,
+			LastName:    user.LastName,
+			PhoneNumber: user.PhoneNumber,
+			Status:      "approved",
+			ReviewedBy:  &chatID,
+		}
+		b.db.Create(&request)
+	} else {
+		request.Status = "approved"
+		b.db.Save(&request)
+	}
+	
+	// Log admin action
+	b.logAdminAction(ctx, chatID, "add_agent", user.TelegramID, "agent",
+		fmt.Sprintf("Added user @%s as agent", user.Username))
+	
+	// Notify user
+	go func() {
+		b.sendMarkdown(
+			context.Background(),
+			user.TelegramID,
+			"🎉 *Agent Status Added*\n\n"+
+			"You have been added as a BabiBingo agent by an administrator!\n\n"+
+			"💰 You can now earn commissions on referrals.\n"+
+			"📊 Use the main bot to view your agent dashboard.",
+		)
+	}()
+	
+	b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+		"✅ *Agent Added Successfully*\n\n"+
+		"👤 User: @%s\n"+
+		"🆔 `%d`\n"+
+		"📱 %s\n"+
+		"💰 Balance: %.2f ETB",
+		user.Username,
+		user.TelegramID,
+		formatPhoneNumber(user.PhoneNumber),
+		user.Balance,
+	))
+}
+
+// ============ EXECUTE REMOVE AGENT ============
+
+func (b *Bot) executeRemoveAgent(ctx context.Context, chatID int64, telegramID int64) {
+	var user models.User
+	if err := b.db.Where("telegram_id = ?", telegramID).First(&user).Error; err != nil {
+		b.sendText(ctx, chatID, "❌ User not found.")
+		return
+	}
+	
+	if !user.IsAgent {
+		b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+			"⚠️ User @%s is not an agent.",
+			user.Username,
+		))
+		return
+	}
+	
+	// Update user to remove agent status
+	user.IsAgent = false
+	if err := b.db.Save(&user).Error; err != nil {
+		b.sendText(ctx, chatID, "❌ Failed to remove agent: "+err.Error())
+		return
+	}
+	
+	// Update agent request
+	var request AgentRequest
+	if err := b.db.Where("user_id = ?", user.TelegramID).First(&request).Error; err == nil {
+		request.Status = "rejected"
+		b.db.Save(&request)
+	}
+	
+	// Log admin action
+	b.logAdminAction(ctx, chatID, "remove_agent", user.TelegramID, "agent",
+		fmt.Sprintf("Removed agent status from user @%s", user.Username))
+	
+	// Notify user
+	go func() {
+		b.sendMarkdown(
+			context.Background(),
+			user.TelegramID,
+			"❌ *Agent Status Removed*\n\n"+
+			"Your agent status has been removed by an administrator.\n\n"+
+			"💰 Your remaining agent balance has been preserved.\n"+
+			"📊 You can reapply for agent status if needed.",
+		)
+	}()
+	
+	b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+		"✅ *Agent Removed Successfully*\n\n"+
+		"👤 User: @%s\n"+
+		"🆔 `%d`\n"+
+		"📱 %s\n"+
+		"💰 Agent Balance Preserved: %.2f ETB",
+		user.Username,
+		user.TelegramID,
+		formatPhoneNumber(user.PhoneNumber),
+		user.AgentBalance,
+	))
+}
+
+// ============ SEARCH AGENTS ============
+
+func (b *Bot) searchAgents(ctx context.Context, chatID int64, query string) {
+	users := b.findUsersByQuery(ctx, query)
+	
+	var agents []models.User
+	for _, user := range users {
+		if user.IsAgent {
+			agents = append(agents, user)
+		}
+	}
+	
+	if len(agents) == 0 {
+		b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+			"🔍 *No agents found for:* `%s`\n\n"+
+			"💡 Try searching with a different phone number or username.",
+			query,
+		))
+		return
+	}
+	
+	text := fmt.Sprintf("🔍 *Agent Search Results*\n\nFound: %d agent(s)\n\n", len(agents))
+	
+	for i, agent := range agents {
+		var referralCount int64
+		b.db.Model(&models.User{}).Where("referred_by = ?", agent.ID).Count(&referralCount)
+		
+		text += fmt.Sprintf(
+			"%d. @%s\n"+
+			"   💰 Balance: %.2f ETB | Agent: %.2f ETB\n"+
+			"   👥 Referrals: %d | 📱 %s\n"+
+			"   🆔 `%d`\n\n",
+			i+1,
+			agent.Username,
+			agent.Balance,
+			agent.AgentBalance,
+			referralCount,
+			formatPhoneNumber(agent.PhoneNumber),
+			agent.TelegramID,
+		)
+	}
+	
+	keyboard := [][]telego.InlineKeyboardButton{
+		{
+			{Text: "🔙 Back to Agents", CallbackData: "agents_menu"},
+		},
+	}
+	
+	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+}
+
+// ============ PENDING AGENTS ============
 
 func (b *Bot) showPendingAgents(ctx context.Context, chatID int64) {
-    var requests []AgentRequest
-    b.db.Where("status = ?", "pending").Order("created_at ASC").Find(&requests)
+	var requests []AgentRequest
+	b.db.Where("status = ?", "pending").Order("created_at ASC").Find(&requests)
 
-    if len(requests) == 0 {
-        b.sendText(ctx, chatID, "📋 No pending agent applications.")
-        return
-    }
+	if len(requests) == 0 {
+		text := "📋 *No Pending Applications*\n\n" +
+			"All agent applications have been reviewed."
+		
+		keyboard := [][]telego.InlineKeyboardButton{
+			{{Text: "🔙 Back to Agents", CallbackData: "agents_menu"}},
+		}
+		
+		b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+		return
+	}
 
-    b.sendMarkdown(ctx, chatID, fmt.Sprintf(
-        "📋 *Pending Applications*\n\nTotal: %d", len(requests),
-    ))
-
-    for _, req := range requests {
-        b.sendAgentRequestCard(ctx, chatID, req)
-    }
+	text := fmt.Sprintf("📋 *Pending Applications*\n\nTotal: %d\n\n", len(requests))
+	
+	for _, req := range requests {
+		text += fmt.Sprintf(
+			"📌 #%d\n"+
+			"👤 @%s\n"+
+			"🆔 `%d`\n"+
+			"📱 %s\n"+
+			"📅 %s\n\n",
+			req.ID,
+			req.Username,
+			req.UserID,
+			formatPhoneNumber(req.PhoneNumber),
+			req.CreatedAt.Format("Jan 2, 2006 15:04"),
+		)
+		
+		// Add inline buttons for each request
+		keyboard := [][]telego.InlineKeyboardButton{
+			{
+				{Text: "✅ Approve", CallbackData: fmt.Sprintf("agents_approve_%d", req.ID)},
+				{Text: "❌ Reject", CallbackData: fmt.Sprintf("agents_reject_%d", req.ID)},
+			},
+			{
+				{Text: "👤 View Details", CallbackData: fmt.Sprintf("agents_view_%d", req.ID)},
+			},
+		}
+		
+		b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+	}
 }
 
-func (b *Bot) sendAgentRequestCard(ctx context.Context, chatID int64, req AgentRequest) {
-    text := fmt.Sprintf(
-        "📋 *Application #%d*\n\n"+
-            "👤 User: @%s\n"+
-            "🆔 ID: %d\n"+
-            "📱 Phone: %s\n"+
-            "📅 Submitted: %s\n"+
-            "📊 Status: 🟡 Pending",
-        req.ID,
-        req.Username,
-        req.UserID,
-        req.PhoneNumber,
-        req.CreatedAt.Format("Jan 2, 2006 15:04"),
-    )
-
-    msg := telego.SendMessageParams{
-        ChatID:      telego.ChatID{ID: chatID},
-        Text:        text,
-        ParseMode:   "Markdown",
-        ReplyMarkup: b.requestActionKeyboard(req.ID),
-    }
-    b.sendMessage(ctx, &msg)
-}
-
-func (b *Bot) approveAgent(ctx context.Context, chatID int64, requestID uint) {
-    var request AgentRequest
-    if err := b.db.First(&request, requestID).Error; err != nil {
-        b.sendText(ctx, chatID, "❌ Request not found.")
-        return
-    }
-
-    // Update request status
-    request.Status = "approved"
-    now := time.Now()
-    request.ReviewedAt = &now
-    b.db.Save(&request)
-
-    // Update user in main database
-    if err := b.db.Model(&models.User{}).Where("telegram_id = ?", request.UserID).Update("is_agent", true).Error; err != nil {
-        b.sendText(ctx, chatID, "⚠️ Approved but failed to update user status.")
-        return
-    }
-
-    // Notify user
-    b.sendMarkdown(
-        ctx,
-        request.UserID,
-        "🎉 *Congratulations!*\n\n"+
-            "Your agent application has been *approved*! 🎉\n\n"+
-            "💰 You are now a BabiBingo agent!\n"+
-            "• Earn 1 ETB per card played by your referrals\n"+
-            "• Use /agent in the main bot to view your dashboard",
-    )
-
-    // Log action
-    b.logAdminAction(ctx, chatID, "approve_agent", request.UserID, "agent", fmt.Sprintf("Approved agent request #%d", requestID))
-
-    b.sendMarkdown(ctx, chatID, fmt.Sprintf(
-        "✅ *Agent #%d Approved*\n\nUser @%s is now an agent.",
-        request.ID, request.Username,
-    ))
-}
-
-func (b *Bot) rejectAgent(ctx context.Context, chatID int64, requestID uint) {
-    var request AgentRequest
-    if err := b.db.First(&request, requestID).Error; err != nil {
-        b.sendText(ctx, chatID, "❌ Request not found.")
-        return
-    }
-
-    request.Status = "rejected"
-    now := time.Now()
-    request.ReviewedAt = &now
-    b.db.Save(&request)
-
-    // Notify user
-    b.sendMarkdown(
-        ctx,
-        request.UserID,
-        "❌ *Application Rejected*\n\n"+
-            "Your agent application has been rejected.\n\n"+
-            "Contact support for more information.",
-    )
-
-    b.logAdminAction(ctx, chatID, "reject_agent", request.UserID, "agent", fmt.Sprintf("Rejected agent request #%d", requestID))
-
-    b.sendMarkdown(ctx, chatID, fmt.Sprintf(
-        "❌ *Agent #%d Rejected*\n\nUser @%s has been rejected.",
-        request.ID, request.Username,
-    ))
-}
-
-func (b *Bot) viewAgent(ctx context.Context, chatID int64, requestID uint) {
-    var request AgentRequest
-    if err := b.db.First(&request, requestID).Error; err != nil {
-        b.sendText(ctx, chatID, "❌ Request not found.")
-        return
-    }
-
-    var user models.User
-    b.db.Where("telegram_id = ?", request.UserID).First(&user)
-
-    var referralCount int64
-    b.db.Model(&models.User{}).Where("referred_by = ?", user.ID).Count(&referralCount)
-
-    var totalCommission float64
-    b.db.Model(&models.Transaction{}).
-        Where("user_id = ? AND type = ?", user.ID, "agent_commission").
-        Select("COALESCE(SUM(amount), 0)").
-        Scan(&totalCommission)
-
-    statusEmoji := "🟡"
-    statusText := "Pending"
-    if request.Status == "approved" {
-        statusEmoji = "✅"
-        statusText = "Approved"
-    } else if request.Status == "rejected" {
-        statusEmoji = "❌"
-        statusText = "Rejected"
-    }
-
-    b.sendMarkdown(
-        ctx,
-        chatID,
-        fmt.Sprintf(
-            "📋 *Agent Details*\n\n"+
-                "👤 Name: %s %s\n"+
-                "🆔 Telegram: @%s\n"+
-                "📱 Phone: %s\n"+
-                "📊 Status: %s %s\n"+
-                "📅 Joined: %s\n\n"+
-                "💰 *Agent Stats:*\n"+
-                "• Agent Balance: %.2f ETB\n"+
-                "• Total Earned: %.2f ETB\n"+
-                "• Referrals: %d",
-            request.FirstName,
-            request.LastName,
-            request.Username,
-            request.PhoneNumber,
-            statusEmoji,
-            statusText,
-            user.CreatedAt.Format("Jan 2, 2006"),
-            user.AgentBalance,
-            totalCommission,
-            referralCount,
-        ),
-    )
-}
-
-func (b *Bot) revokeAgent(ctx context.Context, chatID int64, userID int64) {
-    // Update user in main database
-    if err := b.db.Model(&models.User{}).Where("telegram_id = ?", userID).Update("is_agent", false).Error; err != nil {
-        b.sendText(ctx, chatID, "❌ Failed to revoke agent status.")
-        return
-    }
-
-    // Update agent request status
-    b.db.Model(&AgentRequest{}).Where("user_id = ?", userID).Update("status", "rejected")
-
-    // Notify user
-    b.sendMarkdown(
-        ctx,
-        userID,
-        "❌ *Agent Status Revoked*\n\n"+
-            "Your agent status has been revoked by an administrator.",
-    )
-
-    b.logAdminAction(ctx, chatID, "revoke_agent", userID, "agent", fmt.Sprintf("Revoked agent status for user %d", userID))
-
-    b.sendMarkdown(ctx, chatID, fmt.Sprintf(
-        "❌ *Agent Revoked*\n\nUser %d is no longer an agent.",
-        userID,
-    ))
-}
-
-func (b *Bot) showAgentCommissions(ctx context.Context, chatID int64) {
-    var agents []models.User
-    b.db.Where("is_agent = ?", true).Order("agent_balance DESC").Limit(10).Find(&agents)
-
-    if len(agents) == 0 {
-        b.sendText(ctx, chatID, "📋 No agents found.")
-        return
-    }
-
-    text := "📊 *Top Agents by Commission*\n\n"
-    for i, agent := range agents {
-        var referralCount int64
-        b.db.Model(&models.User{}).Where("referred_by = ?", agent.ID).Count(&referralCount)
-        text += fmt.Sprintf(
-            "%d. @%s - %.2f ETB (%d referrals)\n",
-            i+1,
-            agent.Username,
-            agent.AgentBalance,
-            referralCount,
-        )
-    }
-
-    b.sendMarkdown(ctx, chatID, text)
-}
-// agent.go - Add this function
+// ============ ALL AGENTS ============
 
 func (b *Bot) showAllAgents(ctx context.Context, chatID int64) {
-    var agents []models.User
-    b.db.Where("is_agent = ?", true).Order("created_at DESC").Find(&agents)
+	var agents []models.User
+	b.db.Where("is_agent = ?", true).Order("created_at DESC").Find(&agents)
 
-    if len(agents) == 0 {
-        b.sendText(ctx, chatID, "📋 No agents found.")
-        return
+	if len(agents) == 0 {
+		text := "📋 *No Agents Found*\n\n" +
+			"There are currently no agents in the system."
+		
+		keyboard := [][]telego.InlineKeyboardButton{
+			{{Text: "🔙 Back to Agents", CallbackData: "agents_menu"}},
+		}
+		
+		b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+		return
+	}
+
+	text := fmt.Sprintf("👥 *All Agents*\n\nTotal: %d\n\n", len(agents))
+	
+for i, agent := range agents {
+    if i >= 15 {
+        text += fmt.Sprintf("... and %d more\n", len(agents)-15)
+        break
     }
+    
+    var referralCount int64
+    b.db.Model(&models.User{}).Where("referred_by = ?", agent.ID).Count(&referralCount)
+    
+    text += fmt.Sprintf(
+        "%d. @%s\n"+
+        "   💰 Agent Balance: %.2f ETB\n"+
+        "   👥 Referrals: %d\n"+
+        "   📱 %s\n"+
+        "   🆔 `%d`\n\n",
+        i+1,
+        agent.Username,
+        agent.AgentBalance,
+        referralCount,
+        formatPhoneNumber(agent.PhoneNumber),
+        agent.TelegramID,
+    )
+}
+	
+	keyboard := [][]telego.InlineKeyboardButton{
+		{
+			{Text: "➕ Add Agent", CallbackData: "agents_add"},
+			{Text: "➖ Remove Agent", CallbackData: "agents_remove"},
+		},
+		{
+			{Text: "🔙 Back to Menu", CallbackData: "agents_menu"},
+		},
+	}
+	
+	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+}
 
-    text := "📋 *All Agents*\n\n"
-    for i, agent := range agents {
-        // Get referral count
-        var referralCount int64
-        b.db.Model(&models.User{}).Where("referred_by = ?", agent.ID).Count(&referralCount)
+// ============ APPROVE AGENT ============
 
-        text += fmt.Sprintf(
-            "%d. @%s - %.2f ETB (%d referrals)\n",
-            i+1,
-            agent.Username,
-            agent.AgentBalance,
-            referralCount,
-        )
+func (b *Bot) approveAgent(ctx context.Context, chatID int64, requestID uint) {
+	var request AgentRequest
+	if err := b.db.First(&request, requestID).Error; err != nil {
+		b.sendText(ctx, chatID, "❌ Request not found.")
+		return
+	}
 
-        // Truncate if too long (Telegram limit ~4096 chars)
-        if len(text) > 3500 {
-            text += "\n... and more"
-            break
-        }
-    }
+	if request.Status != "pending" {
+		b.sendText(ctx, chatID, fmt.Sprintf("⚠️ This request is already %s.", request.Status))
+		return
+	}
 
-    b.sendMarkdown(ctx, chatID, text)
+	request.Status = "approved"
+	now := time.Now()
+	request.ReviewedAt = &now
+	reviewedBy := chatID
+	request.ReviewedBy = &reviewedBy
+	b.db.Save(&request)
+
+	// Update user in main database
+	if err := b.db.Model(&models.User{}).Where("telegram_id = ?", request.UserID).Update("is_agent", true).Error; err != nil {
+		b.sendText(ctx, chatID, "⚠️ Approved but failed to update user status.")
+		return
+	}
+
+	// Notify user
+	go func() {
+		b.sendMarkdown(
+			context.Background(),
+			request.UserID,
+			"🎉 *Congratulations!*\n\n"+
+			"Your agent application has been *approved*! 🎉\n\n"+
+			"💰 You are now a BabiBingo agent!\n"+
+			"• Earn commissions on referrals\n"+
+			"• Use the main bot to view your agent dashboard",
+		)
+	}()
+
+	b.logAdminAction(ctx, chatID, "approve_agent", request.UserID, "agent", 
+		fmt.Sprintf("Approved agent request #%d", requestID))
+
+	b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+		"✅ *Agent #%d Approved*\n\nUser @%s is now an agent.",
+		request.ID, request.Username,
+	))
+}
+
+// ============ REJECT AGENT ============
+
+func (b *Bot) rejectAgent(ctx context.Context, chatID int64, requestID uint) {
+	var request AgentRequest
+	if err := b.db.First(&request, requestID).Error; err != nil {
+		b.sendText(ctx, chatID, "❌ Request not found.")
+		return
+	}
+
+	if request.Status != "pending" {
+		b.sendText(ctx, chatID, fmt.Sprintf("⚠️ This request is already %s.", request.Status))
+		return
+	}
+
+	request.Status = "rejected"
+	now := time.Now()
+	request.ReviewedAt = &now
+	reviewedBy := chatID
+	request.ReviewedBy = &reviewedBy
+	b.db.Save(&request)
+
+	// Notify user
+	go func() {
+		b.sendMarkdown(
+			context.Background(),
+			request.UserID,
+			"❌ *Application Rejected*\n\n"+
+			"Your agent application has been rejected.\n\n"+
+			"Contact support for more information.",
+		)
+	}()
+
+	b.logAdminAction(ctx, chatID, "reject_agent", request.UserID, "agent", 
+		fmt.Sprintf("Rejected agent request #%d", requestID))
+
+	b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+		"❌ *Agent #%d Rejected*\n\nUser @%s has been rejected.",
+		request.ID, request.Username,
+	))
+}
+
+// ============ VIEW AGENT ============
+
+func (b *Bot) viewAgent(ctx context.Context, chatID int64, requestID uint) {
+	var request AgentRequest
+	if err := b.db.First(&request, requestID).Error; err != nil {
+		b.sendText(ctx, chatID, "❌ Request not found.")
+		return
+	}
+
+	var user models.User
+	b.db.Where("telegram_id = ?", request.UserID).First(&user)
+
+	var referralCount int64
+	b.db.Model(&models.User{}).Where("referred_by = ?", user.ID).Count(&referralCount)
+
+	var totalCommission float64
+	b.db.Model(&models.Transaction{}).
+		Where("user_id = ? AND type = ?", user.ID, "agent_commission").
+		Select("COALESCE(SUM(amount), 0)").
+		Scan(&totalCommission)
+
+	statusEmoji := "🟡"
+	statusText := "Pending"
+	if request.Status == "approved" {
+		statusEmoji = "✅"
+		statusText = "Approved"
+	} else if request.Status == "rejected" {
+		statusEmoji = "❌"
+		statusText = "Rejected"
+	}
+
+	text := fmt.Sprintf(
+		"📋 *Agent Details*\n\n"+
+		"👤 Name: %s %s\n"+
+		"🆔 Telegram: @%s\n"+
+		"📱 Phone: %s\n"+
+		"📊 Status: %s %s\n"+
+		"📅 Joined: %s\n\n"+
+		"💰 *Agent Stats:*\n"+
+		"• Agent Balance: %.2f ETB\n"+
+		"• Total Earned: %.2f ETB\n"+
+		"• Referrals: %d",
+		request.FirstName,
+		request.LastName,
+		request.Username,
+		formatPhoneNumber(request.PhoneNumber),
+		statusEmoji,
+		statusText,
+		user.CreatedAt.Format("Jan 2, 2006"),
+		user.AgentBalance,
+		totalCommission,
+		referralCount,
+	)
+	
+	keyboard := [][]telego.InlineKeyboardButton{
+		{
+			{Text: "🔙 Back to Pending", CallbackData: "agents_pending"},
+			{Text: "🔙 Back to Menu", CallbackData: "agents_menu"},
+		},
+	}
+	
+	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+}
+
+// ============ REVOKE AGENT ============
+
+func (b *Bot) revokeAgent(ctx context.Context, chatID int64, userID int64) {
+	var user models.User
+	if err := b.db.Where("telegram_id = ?", userID).First(&user).Error; err != nil {
+		b.sendText(ctx, chatID, "❌ User not found.")
+		return
+	}
+
+	if !user.IsAgent {
+		b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+			"⚠️ User @%s is not an agent.",
+			user.Username,
+		))
+		return
+	}
+
+	user.IsAgent = false
+	if err := b.db.Save(&user).Error; err != nil {
+		b.sendText(ctx, chatID, "❌ Failed to revoke agent status.")
+		return
+	}
+
+	// Update agent request
+	b.db.Model(&AgentRequest{}).Where("user_id = ?", userID).Update("status", "rejected")
+
+	// Notify user
+	go func() {
+		b.sendMarkdown(
+			context.Background(),
+			userID,
+			"❌ *Agent Status Revoked*\n\n"+
+			"Your agent status has been revoked by an administrator.",
+		)
+	}()
+
+	b.logAdminAction(ctx, chatID, "revoke_agent", userID, "agent", 
+		fmt.Sprintf("Revoked agent status for user %d", userID))
+
+	b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+		"❌ *Agent Revoked*\n\nUser @%s is no longer an agent.",
+		user.Username,
+	))
+}
+
+// ============ AGENT COMMISSIONS ============
+
+func (b *Bot) showAgentCommissions(ctx context.Context, chatID int64) {
+	var agents []models.User
+	b.db.Where("is_agent = ?", true).Order("agent_balance DESC").Limit(20).Find(&agents)
+
+	if len(agents) == 0 {
+		text := "📊 *No Agents Found*\n\n" +
+			"There are currently no agents with commissions."
+		
+		keyboard := [][]telego.InlineKeyboardButton{
+			{{Text: "🔙 Back to Agents", CallbackData: "agents_menu"}},
+		}
+		
+		b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+		return
+	}
+
+	text := "📊 *Top Agents by Commission*\n\n"
+	
+	totalCommissions := 0.0
+	for i, agent := range agents {
+		if i >= 10 {
+			break
+		}
+		var referralCount int64
+		b.db.Model(&models.User{}).Where("referred_by = ?", agent.ID).Count(&referralCount)
+		
+		text += fmt.Sprintf(
+			"%d. @%s\n"+
+			"   💰 Commission: %.2f ETB\n"+
+			"   👥 Referrals: %d\n\n",
+			i+1,
+			agent.Username,
+			agent.AgentBalance,
+			referralCount,
+		)
+		
+		totalCommissions += agent.AgentBalance
+	}
+	
+	text += fmt.Sprintf("📊 *Total Commissions:* %.2f ETB", totalCommissions)
+	
+	keyboard := [][]telego.InlineKeyboardButton{
+		{
+			{Text: "🔙 Back to Agents", CallbackData: "agents_menu"},
+		},
+	}
+	
+	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+}
+
+// ============ CALLBACK HANDLERS FOR AGENTS ============
+
+// Add these to your callback.go file
+func (b *Bot) handleAgentCallbacks(ctx context.Context, query *telego.CallbackQuery) {
+	data := query.Data
+	chatID := query.Message.GetChat().ID
+
+	b.api.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
+		CallbackQueryID: query.ID,
+	})
+
+	parts := strings.Split(data, "_")
+	if len(parts) < 2 {
+		return
+	}
+
+	switch parts[0] {
+	case "agents":
+		switch parts[1] {
+		case "menu":
+			b.showAgentsMenu(ctx, chatID)
+			
+		case "add":
+			b.handleAddAgentFlow(ctx, chatID)
+			
+		case "remove":
+			b.handleRemoveAgentFlow(ctx, chatID)
+			
+		case "pending":
+			b.showPendingAgents(ctx, chatID)
+			
+		case "all":
+			b.showAllAgents(ctx, chatID)
+			
+		case "search":
+			b.sendMarkdown(ctx, chatID,
+				"🔍 *Search Agents*\n\n"+
+				"📱 Enter phone number or username to search for agents:")
+			b.tempState.Store(chatID, "awaiting_agent_search")
+			
+		case "commissions":
+			b.showAgentCommissions(ctx, chatID)
+			
+		case "approve":
+			if len(parts) > 2 {
+				id, _ := strconv.Atoi(parts[2])
+				b.approveAgent(ctx, chatID, uint(id))
+			}
+			
+		case "reject":
+			if len(parts) > 2 {
+				id, _ := strconv.Atoi(parts[2])
+				b.rejectAgent(ctx, chatID, uint(id))
+			}
+			
+		case "view":
+			if len(parts) > 2 {
+				id, _ := strconv.Atoi(parts[2])
+				b.viewAgent(ctx, chatID, uint(id))
+			}
+			
+		case "confirm_add":
+			if len(parts) > 2 {
+				userID, _ := strconv.ParseInt(parts[2], 10, 64)
+				b.executeAddAgent(ctx, chatID, userID)
+			}
+			
+		case "confirm_remove":
+			if len(parts) > 2 {
+				userID, _ := strconv.ParseInt(parts[2], 10, 64)
+				b.executeRemoveAgent(ctx, chatID, userID)
+			}
+		}
+	}
+}
+
+// ============ HANDLE AGENT TEXT INPUT ============
+
+// Add to your message handler
+func (b *Bot) handleAgentTextInput(ctx context.Context, chatID int64, text string) {
+	if state, ok := b.tempState.Load(chatID); ok {
+		stateStr := state.(string)
+		
+		// Add agent search
+		if stateStr == "awaiting_add_agent_search" {
+			b.tempState.Delete(chatID)
+			b.handleSearchAndAddAgent(ctx, chatID, text)
+			return
+		}
+		
+		// Remove agent search
+		if stateStr == "awaiting_remove_agent_search" {
+			b.tempState.Delete(chatID)
+			b.handleRemoveAgentSearch(ctx, chatID, text)
+			return
+		}
+		
+		// Add agent selection (user typed an ID)
+		if stateStr == "awaiting_add_agent_selection" {
+			b.tempState.Delete(chatID)
+			if id, err := strconv.ParseInt(text, 10, 64); err == nil {
+				b.confirmAddAgent(ctx, chatID, models.User{TelegramID: id})
+			} else {
+				b.sendText(ctx, chatID, "❌ Invalid user ID. Please type a valid Telegram ID.")
+			}
+			return
+		}
+		
+		// Remove agent selection (user typed an ID)
+		if stateStr == "awaiting_remove_agent_selection" {
+			b.tempState.Delete(chatID)
+			if id, err := strconv.ParseInt(text, 10, 64); err == nil {
+				b.confirmRemoveAgent(ctx, chatID, models.User{TelegramID: id})
+			} else {
+				b.sendText(ctx, chatID, "❌ Invalid user ID. Please type a valid Telegram ID.")
+			}
+			return
+		}
+		
+		// Agent search from button
+		if stateStr == "awaiting_agent_search" {
+			b.tempState.Delete(chatID)
+			b.searchAgents(ctx, chatID, text)
+			return
+		}
+	}
 }
