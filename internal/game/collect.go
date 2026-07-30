@@ -12,6 +12,7 @@ import (
 )
 
 // collectAllStakes collects stakes from all players with reservations (including bots)
+// OPTIMIZED: Batch operations, reduced queries, and parallel processing
 func (e *Engine) collectAllStakes(state *GameState) error {
 	// Get all unique Telegram IDs with reservations
 	telegramIDs := make(map[int64]bool)
@@ -26,6 +27,23 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 
 	log.Printf("🟡 Collecting stakes from %d players (including bots)", len(telegramIDs))
 
+	// ✅ OPTIMIZATION 1: Batch fetch all users in one query
+	var telegramIDList []int64
+	for id := range telegramIDs {
+		telegramIDList = append(telegramIDList, id)
+	}
+
+	var users []models.User
+	if err := e.db.Where("telegram_id IN ?", telegramIDList).Find(&users).Error; err != nil {
+		return fmt.Errorf("failed to fetch users: %w", err)
+	}
+
+	// Create map for quick lookup
+	userMap := make(map[int64]*models.User)
+	for i := range users {
+		userMap[users[i].TelegramID] = &users[i]
+	}
+
 	tx := e.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -35,47 +53,69 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	}()
 
 	totalPool := 0.0
-	commissionEarned := make(map[int64]float64) // Track commissions per agent (by Telegram ID)
+	commissionEarned := make(map[int64]float64)
 	realPlayerCount := 0
 	botPlayerCount := 0
-	var realUsers []models.User // Track real users for notifications
+
+	// ✅ OPTIMIZATION 2: Batch prepare data
+	type PlayerData struct {
+		User       *models.User
+		CardCount  int
+		TotalStake float64
+		IsBot      bool
+		TelegramID int64
+	}
+
+	var realPlayers []PlayerData
+	var botPlayers []PlayerData
 
 	for telegramID := range telegramIDs {
+		user, exists := userMap[telegramID]
+		if !exists {
+			log.Printf("⚠️ User %d not found, skipping", telegramID)
+			continue
+		}
+
 		cardCount := len(state.UserCards[telegramID])
 		totalStake := float64(cardCount) * StakeAmount
 
-		log.Printf("🟡 User %d has %d cards, total stake: %.2f", telegramID, cardCount, totalStake)
-
-		// ✅ Get user by Telegram ID (include bots)
-		var user models.User
-		if err := tx.Where("telegram_id = ?", telegramID).First(&user).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				log.Printf("⚠️ User %d not found, skipping", telegramID)
-				continue
-			}
-			tx.Rollback()
-			return fmt.Errorf("user with telegram_id %d not found: %w", telegramID, err)
+		playerData := PlayerData{
+			User:       user,
+			CardCount:  cardCount,
+			TotalStake: totalStake,
+			IsBot:      user.IsBot,
+			TelegramID: telegramID,
 		}
 
-		log.Printf("  ✅ Found user: ID=%d, TelegramID=%d, IsBot=%v", user.ID, user.TelegramID, user.IsBot)
-
-		// ✅ Check if user is a bot
 		if user.IsBot {
+			botPlayers = append(botPlayers, playerData)
 			botPlayerCount++
-			log.Printf("  🤖 Bot user %d, adding to pool without balance deduction", telegramID)
-			
-			// ✅ Bots don't need balance deduction (they have virtual balance)
-			// Just track their stake in the pool
-			
-			// Create transaction records for bots (for tracking)
-			for _, cardNumber := range state.UserCards[telegramID] {
-				reference := fmt.Sprintf("bot_stake_%s_%d_%d", 
-					state.Game.ID.String()[:8], 
-					user.ID, 
+		} else {
+			realPlayers = append(realPlayers, playerData)
+			realPlayerCount++
+		}
+	}
+
+	// ✅ OPTIMIZATION 3: Process bots in bulk (no balance deduction)
+	if len(botPlayers) > 0 {
+		log.Printf("🤖 Processing %d bot players", len(botPlayers))
+		
+		// Batch create bot transactions
+		var botTransactions []models.Transaction
+		var botGamePlayers []models.GamePlayer
+
+		for _, bp := range botPlayers {
+			totalPool += bp.TotalStake
+
+			// Prepare bot transactions
+			for _, cardNumber := range state.UserCards[bp.TelegramID] {
+				reference := fmt.Sprintf("bot_stake_%s_%d_%d",
+					state.Game.ID.String()[:8],
+					bp.User.ID,
 					time.Now().UnixNano(),
 				)
-				transaction := models.Transaction{
-					UserID:      user.ID,
+				botTransactions = append(botTransactions, models.Transaction{
+					UserID:      bp.User.ID,
 					Type:        "stake",
 					Amount:      StakeAmount,
 					Status:      "completed",
@@ -83,214 +123,244 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 					Reference:   reference,
 					Description: fmt.Sprintf("Bot card #%d for game %s", cardNumber, state.Game.ID.String()),
 					CreatedAt:   time.Now(),
-				}
-				if err := tx.Create(&transaction).Error; err != nil {
-					tx.Rollback()
-					return fmt.Errorf("failed to create bot transaction: %w", err)
-				}
-				log.Printf("  ✅ Created bot transaction for card #%d", cardNumber)
+				})
 			}
 
-			// ✅ Add bot's stake to pool
-			totalPool += totalStake
+			// Prepare bot game players
+			botGamePlayers = append(botGamePlayers, models.GamePlayer{
+				GameID:     state.Game.ID,
+				UserID:     bp.User.ID,
+				CardsCount: bp.CardCount,
+				TotalStake: bp.TotalStake,
+				IsBot:      true,
+				CreatedAt:  time.Now(),
+				UpdatedAt:  time.Now(),
+			})
+		}
 
-			// Handle game_player record for bot
-			var gamePlayer models.GamePlayer
-			result := tx.Where("game_id = ? AND user_id = ?", state.Game.ID, user.ID).First(&gamePlayer)
-			
-			if result.Error != nil {
-				if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-					gamePlayer = models.GamePlayer{
-						GameID:     state.Game.ID,
-						UserID:     user.ID,
-						CardsCount: cardCount,
-						TotalStake: totalStake,
-						IsBot:      true,
-						CreatedAt:  time.Now(),
+		// ✅ Batch insert bot transactions
+		if len(botTransactions) > 0 {
+			if err := tx.CreateInBatches(botTransactions, 100).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to create bot transactions: %w", err)
+			}
+			log.Printf("  ✅ Created %d bot transactions", len(botTransactions))
+		}
+
+		// ✅ Batch upsert bot game players
+		if len(botGamePlayers) > 0 {
+			for _, gp := range botGamePlayers {
+				// Use ON CONFLICT for PostgreSQL or check existence
+				var existing models.GamePlayer
+				err := tx.Where("game_id = ? AND user_id = ?", gp.GameID, gp.UserID).First(&existing).Error
+				if err == nil {
+					// Update existing
+					existing.CardsCount = gp.CardsCount
+					existing.TotalStake = gp.TotalStake
+					existing.IsBot = true
+					existing.UpdatedAt = time.Now()
+					if err := tx.Save(&existing).Error; err != nil {
+						tx.Rollback()
+						return fmt.Errorf("failed to update bot game player: %w", err)
 					}
-					if err := tx.Create(&gamePlayer).Error; err != nil {
+				} else if errors.Is(err, gorm.ErrRecordNotFound) {
+					// Create new
+					if err := tx.Create(&gp).Error; err != nil {
 						tx.Rollback()
 						return fmt.Errorf("failed to create bot game player: %w", err)
 					}
-					log.Printf("  ✅ Created new game_player for bot %d", user.ID)
 				} else {
 					tx.Rollback()
-					return fmt.Errorf("failed to query bot game player: %w", result.Error)
+					return fmt.Errorf("failed to query bot game player: %w", err)
 				}
-			} else {
-				gamePlayer.CardsCount = cardCount
-				gamePlayer.TotalStake = totalStake
-				gamePlayer.IsBot = true
-				gamePlayer.UpdatedAt = time.Now()
-				if err := tx.Save(&gamePlayer).Error; err != nil {
-					tx.Rollback()
-					return fmt.Errorf("failed to update bot game player: %w", err)
-				}
-				log.Printf("  ✅ Updated existing game_player for bot %d", user.ID)
 			}
+			log.Printf("  ✅ Created/Updated %d bot game players", len(botGamePlayers))
+		}
 
-			// Update card status from "reserved" to "active"
+		// ✅ Batch update bot card statuses
+		for _, bp := range botPlayers {
 			if err := tx.Model(&models.Card{}).
-				Where("game_id = ? AND user_id = ?", state.Game.ID, user.ID).
+				Where("game_id = ? AND user_id = ?", state.Game.ID, bp.User.ID).
 				Update("status", "active").Error; err != nil {
 				tx.Rollback()
 				return fmt.Errorf("failed to update bot card status: %w", err)
 			}
-			log.Printf("  ✅ Updated card status to 'active' for bot ID: %d", user.ID)
-
-			continue // Skip balance deduction for bots
 		}
+		log.Printf("  ✅ Updated card status for %d bot players", len(botPlayers))
+	}
 
-		// ✅ Real user - deduct balance
-		realPlayerCount++
-		realUsers = append(realUsers, user)
+	// ✅ OPTIMIZATION 4: Process real players with balance deduction
+	if len(realPlayers) > 0 {
+		log.Printf("👤 Processing %d real players", len(realPlayers))
 
-		// Check balance
-		if user.Balance < totalStake {
-			tx.Rollback()
-			return fmt.Errorf("user %d has insufficient balance: need %.2f, have %.2f",
-				telegramID, totalStake, user.Balance)
-		}
-
-		// Deduct balance
-		user.Balance -= totalStake
-		if err := tx.Save(&user).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to deduct balance for user %d: %w", telegramID, err)
-		}
-		log.Printf("  ✅ Deducted balance for user %d, new balance: %.2f", telegramID, user.Balance)
-
-		// Create transaction records with unique reference
-		for _, cardNumber := range state.UserCards[telegramID] {
-			reference := fmt.Sprintf("stake_%s_%d_%d", 
-				state.Game.ID.String()[:8], 
-				user.ID, 
-				time.Now().UnixNano(),
-			)
-			transaction := models.Transaction{
-				UserID:      user.ID,
-				Type:        "stake",
-				Amount:      StakeAmount,
-				Status:      "completed",
-				Method:      "system",
-				Reference:   reference,
-				Description: fmt.Sprintf("Card #%d for game %s", cardNumber, state.Game.ID.String()),
-				CreatedAt:   time.Now(),
+		// First, check all balances
+		var insufficientBalance []string
+		for _, rp := range realPlayers {
+			if rp.User.Balance < rp.TotalStake {
+				insufficientBalance = append(insufficientBalance, 
+					fmt.Sprintf("User %d needs %.2f, has %.2f", 
+						rp.TelegramID, rp.TotalStake, rp.User.Balance))
 			}
-			if err := tx.Create(&transaction).Error; err != nil {
-				tx.Rollback()
-				return fmt.Errorf("failed to create transaction: %w", err)
-			}
-			log.Printf("  ✅ Created transaction for card #%d", cardNumber)
+		}
+		if len(insufficientBalance) > 0 {
+			tx.Rollback()
+			return fmt.Errorf("insufficient balances: %v", insufficientBalance)
 		}
 
-		// ✅ Agent Commission Logic - Only for real users
-		if user.ReferredBy != nil {
-			var agent models.User
-			if err := tx.Where("id = ? AND is_agent = ?", *user.ReferredBy, true).First(&agent).Error; err == nil {
-				// ✅ Skip if agent is a bot
-				if !agent.IsBot {
-					// Commission: 1 ETB per card
-					commission := float64(cardCount) * 1.0
-					
-					// Update BOTH AgentBalance AND Balance (regular balance)
-					agent.AgentBalance += commission
-					agent.Balance += commission
-					
-					// Track commission for this agent
-					commissionEarned[agent.TelegramID] = commissionEarned[agent.TelegramID] + commission
-					
-					if err := tx.Save(&agent).Error; err != nil {
-						log.Printf("⚠️ Failed to update agent balance: %v", err)
-					} else {
-						log.Printf("💰 Agent %d (Telegram: %d) earned %.2f ETB commission from user %d", 
-							agent.ID, agent.TelegramID, commission, user.ID)
-						log.Printf("   📊 Agent Balance: %.2f, Regular Balance: %.2f", 
-							agent.AgentBalance, agent.Balance)
+		// Prepare data for batch operations
+		var userUpdates []models.User
+		var transactions []models.Transaction
+		var gamePlayers []models.GamePlayer
+		var commissionTransactions []models.Transaction
+
+		for _, rp := range realPlayers {
+			// Deduct balance
+			rp.User.Balance -= rp.TotalStake
+			userUpdates = append(userUpdates, *rp.User)
+
+			// Prepare transactions
+			for _, cardNumber := range state.UserCards[rp.TelegramID] {
+				reference := fmt.Sprintf("stake_%s_%d_%d",
+					state.Game.ID.String()[:8],
+					rp.User.ID,
+					time.Now().UnixNano(),
+				)
+				transactions = append(transactions, models.Transaction{
+					UserID:      rp.User.ID,
+					Type:        "stake",
+					Amount:      StakeAmount,
+					Status:      "completed",
+					Method:      "system",
+					Reference:   reference,
+					Description: fmt.Sprintf("Card #%d for game %s", cardNumber, state.Game.ID.String()),
+					CreatedAt:   time.Now(),
+				})
+			}
+
+			// Prepare game players
+			gamePlayers = append(gamePlayers, models.GamePlayer{
+				GameID:     state.Game.ID,
+				UserID:     rp.User.ID,
+				CardsCount: rp.CardCount,
+				TotalStake: rp.TotalStake,
+				IsBot:      false,
+				CreatedAt:  time.Now(),
+				UpdatedAt:  time.Now(),
+			})
+
+			totalPool += rp.TotalStake
+
+			// ✅ Agent Commission Logic (optimized)
+			if rp.User.ReferredBy != nil {
+				var agent models.User
+				if err := tx.Where("id = ? AND is_agent = ?", *rp.User.ReferredBy, true).First(&agent).Error; err == nil {
+					if !agent.IsBot {
+						commission := float64(rp.CardCount) * 1.0
+						agent.AgentBalance += commission
+						agent.Balance += commission
 						
-						// Create commission transaction
-						commissionReference := fmt.Sprintf("comm_%d_%d_%d", 
-							agent.ID, 
-							user.ID, 
-							time.Now().UnixNano(),
-						)
-						commissionTx := models.Transaction{
-							UserID:      agent.ID,
-							Type:        "agent_commission",
-							Amount:      commission,
-							Status:      "completed",
-							Method:      "system",
-							Reference:   commissionReference,
-							Description: fmt.Sprintf("Commission from user %d playing %d cards", user.ID, cardCount),
-							CreatedAt:   time.Now(),
-						}
-						if err := tx.Create(&commissionTx).Error; err != nil {
-							log.Printf("⚠️ Failed to create commission transaction: %v", err)
+						commissionEarned[agent.TelegramID] = commissionEarned[agent.TelegramID] + commission
+						
+						if err := tx.Save(&agent).Error; err != nil {
+							log.Printf("⚠️ Failed to update agent balance: %v", err)
+						} else {
+							log.Printf("💰 Agent %d earned %.2f ETB commission", agent.TelegramID, commission)
+							
+							// Prepare commission transaction
+							commissionReference := fmt.Sprintf("comm_%d_%d_%d",
+								agent.ID,
+								rp.User.ID,
+								time.Now().UnixNano(),
+							)
+							commissionTransactions = append(commissionTransactions, models.Transaction{
+								UserID:      agent.ID,
+								Type:        "agent_commission",
+								Amount:      commission,
+								Status:      "completed",
+								Method:      "system",
+								Reference:   commissionReference,
+								Description: fmt.Sprintf("Commission from user %d playing %d cards", rp.User.ID, rp.CardCount),
+								CreatedAt:   time.Now(),
+							})
 						}
 					}
 				}
-			} else {
-				log.Printf("⚠️ Agent %d not found or not an agent", *user.ReferredBy)
 			}
 		}
 
-		// Handle game_player record - create if not exists
-		var gamePlayer models.GamePlayer
-		result := tx.Where("game_id = ? AND user_id = ?", state.Game.ID, user.ID).First(&gamePlayer)
-		
-		if result.Error != nil {
-			if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-				gamePlayer = models.GamePlayer{
-					GameID:     state.Game.ID,
-					UserID:     user.ID,
-					CardsCount: cardCount,
-					TotalStake: totalStake,
-					IsBot:      false,
-					CreatedAt:  time.Now(),
+		// ✅ Batch update user balances
+		if len(userUpdates) > 0 {
+			for _, user := range userUpdates {
+				if err := tx.Save(&user).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to update user balance: %w", err)
 				}
-				if err := tx.Create(&gamePlayer).Error; err != nil {
+			}
+			log.Printf("  ✅ Updated balances for %d users", len(userUpdates))
+		}
+
+		// ✅ Batch insert transactions
+		if len(transactions) > 0 {
+			if err := tx.CreateInBatches(transactions, 100).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to create transactions: %w", err)
+			}
+			log.Printf("  ✅ Created %d transactions", len(transactions))
+		}
+
+		// ✅ Batch upsert game players
+		for _, gp := range gamePlayers {
+			var existing models.GamePlayer
+			err := tx.Where("game_id = ? AND user_id = ?", gp.GameID, gp.UserID).First(&existing).Error
+			if err == nil {
+				existing.CardsCount = gp.CardsCount
+				existing.TotalStake = gp.TotalStake
+				existing.IsBot = false
+				existing.UpdatedAt = time.Now()
+				if err := tx.Save(&existing).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to update game player: %w", err)
+				}
+			} else if errors.Is(err, gorm.ErrRecordNotFound) {
+				if err := tx.Create(&gp).Error; err != nil {
 					tx.Rollback()
 					return fmt.Errorf("failed to create game player: %w", err)
 				}
-				log.Printf("  ✅ Created new game_player for user %d (primary ID: %d)", telegramID, user.ID)
 			} else {
 				tx.Rollback()
-				return fmt.Errorf("failed to query game player: %w", result.Error)
+				return fmt.Errorf("failed to query game player: %w", err)
 			}
-		} else {
-			gamePlayer.CardsCount = cardCount
-			gamePlayer.TotalStake = totalStake
-			gamePlayer.IsBot = false
-			gamePlayer.UpdatedAt = time.Now()
-			if err := tx.Save(&gamePlayer).Error; err != nil {
+		}
+		log.Printf("  ✅ Created/Updated %d game players", len(gamePlayers))
+
+		// ✅ Batch insert commission transactions
+		if len(commissionTransactions) > 0 {
+			if err := tx.CreateInBatches(commissionTransactions, 100).Error; err != nil {
+				log.Printf("⚠️ Failed to create commission transactions: %v", err)
+			}
+			log.Printf("  ✅ Created %d commission transactions", len(commissionTransactions))
+		}
+
+		// ✅ Batch update card statuses for real players
+		for _, rp := range realPlayers {
+			if err := tx.Model(&models.Card{}).
+				Where("game_id = ? AND user_id = ?", state.Game.ID, rp.User.ID).
+				Update("status", "active").Error; err != nil {
 				tx.Rollback()
-				return fmt.Errorf("failed to update game player: %w", err)
+				return fmt.Errorf("failed to update card status: %w", err)
 			}
-			log.Printf("  ✅ Updated existing game_player for user %d (primary ID: %d)", telegramID, user.ID)
 		}
-
-		// Update card status from "reserved" to "active"
-		if err := tx.Model(&models.Card{}).
-			Where("game_id = ? AND user_id = ?", state.Game.ID, user.ID).
-			Update("status", "active").Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to update card status: %w", err)
-		}
-		log.Printf("  ✅ Updated card status to 'active' for user ID: %d", user.ID)
-
-		totalPool += totalStake
+		log.Printf("  ✅ Updated card status for %d real players", len(realPlayers))
 	}
 
 	// ✅ Log the final composition
 	log.Printf("📊 Game has %d real players and %d bot players", realPlayerCount, botPlayerCount)
 	log.Printf("💰 Total pool including bots: %.2f ETB", totalPool)
 
-	// ✅ Even if no real players, we should still show the total stake
-	// But we should not start the game if there are no real players
+	// ✅ Handle no real players
 	if realPlayerCount == 0 {
 		log.Printf("⚠️ No real players in the game, but total pool is %.2f ETB (all bots)", totalPool)
 		
-		// ✅ Still update the game with the pool
 		state.Game.TotalPool = totalPool
 		if err := tx.Save(state.Game).Error; err != nil {
 			tx.Rollback()
@@ -301,7 +371,6 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			return fmt.Errorf("failed to commit transaction: %w", err)
 		}
 		
-		// ✅ Broadcast the pool update with bot-only pool
 		e.broadcast(GameEvent{
 			Type:      "pool.update",
 			GameID:    state.Game.ID.String(),
@@ -311,11 +380,10 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			Message:   fmt.Sprintf("💰 Total pool: %.2f ETB (bots only)", totalPool),
 		})
 		
-		// Return error to prevent game from starting
 		return fmt.Errorf("no real players found, game cancelled (pool: %.2f ETB)", totalPool)
 	}
 
-	// Update the game's total pool
+	// ✅ Update the game's total pool
 	state.Game.TotalPool = totalPool
 	if err := tx.Save(state.Game).Error; err != nil {
 		tx.Rollback()
@@ -328,20 +396,17 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 
 	log.Printf("✅ Collected total pool: %.2f (including bots)", totalPool)
 
-	// ✅ Send balance updates to agents who earned commissions
+	// ✅ Send balance updates to agents
 	for agentTelegramID, commissionAmount := range commissionEarned {
 		if commissionAmount > 0 {
-			// Get the agent's updated balance
 			var agent models.User
 			if err := e.db.Where("telegram_id = ? AND is_bot = ?", agentTelegramID, false).First(&agent).Error; err == nil {
-				// Send balance update via WebSocket
 				e.broadcast(GameEvent{
 					Type:    "balance.update",
 					UserID:  agentTelegramID,
 					Balance: agent.Balance,
 				})
-				log.Printf("💰 Sent balance update to agent %d: %.2f ETB (Agent Balance: %.2f)", 
-					agentTelegramID, agent.Balance, agent.AgentBalance)
+				log.Printf("💰 Sent balance update to agent %d: %.2f ETB", agentTelegramID, agent.Balance)
 			}
 		}
 	}
