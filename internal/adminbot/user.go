@@ -191,19 +191,40 @@ func (b *Bot) findUsersByQuery(ctx context.Context, query string) []models.User 
 	// Format the query
 	formattedQuery := b.formatSearchQuery(query)
 	
-	// Try exact phone number match
+	// Try exact phone number match (both with and without +)
 	if formattedQuery != "" {
+		// Try with + prefix
 		b.db.Where("phone_number = ?", formattedQuery).
 			Where("is_bot = ?", false).
 			Find(&users)
 		if len(users) > 0 {
 			return users
 		}
+		
+		// Try without + prefix (for database entries without +)
+		phoneWithoutPlus := strings.TrimPrefix(formattedQuery, "+")
+		b.db.Where("phone_number = ?", phoneWithoutPlus).
+			Where("is_bot = ?", false).
+			Find(&users)
+		if len(users) > 0 {
+			return users
+		}
+		
+		// Try with + prefix if the database has it
+		if !strings.HasPrefix(formattedQuery, "+") {
+			b.db.Where("phone_number = ?", "+"+formattedQuery).
+				Where("is_bot = ?", false).
+				Find(&users)
+			if len(users) > 0 {
+				return users
+			}
+		}
 	}
 	
-	// Try partial phone match
+	// Try partial phone match (search for the number without +)
 	if formattedQuery != "" {
-		b.db.Where("phone_number ILIKE ?", "%"+formattedQuery+"%").
+		searchPhone := strings.TrimPrefix(formattedQuery, "+")
+		b.db.Where("phone_number ILIKE ?", "%"+searchPhone+"%").
 			Where("is_bot = ?", false).
 			Find(&users)
 		if len(users) > 0 {
@@ -222,7 +243,6 @@ func (b *Bot) findUsersByQuery(ctx context.Context, query string) []models.User 
 	
 	return users
 }
-
 // ============ LIST USERS ============
 
 func (b *Bot) listUsers(ctx context.Context, chatID int64, page int) {
