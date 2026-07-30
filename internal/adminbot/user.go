@@ -23,7 +23,32 @@ func (b *Bot) handleUsers(ctx context.Context, chatID int64, args []string) {
 
 // ============ SHOW USERS MAIN MENU ============
 
+func (b *Bot) showUsersMenu(ctx context.Context, chatID int64) {
+	text := "👥 *User Management*\n\n" +
+		"Select an action below:\n\n" +
+		"🔍 *Search* - Find users by phone/username\n" +
+		"➕ *Add Balance* - Add balance to a user\n" +
+		"➖ *Deduct Balance* - Deduct balance from a user\n" +
+		"📋 *List* - View all users\n" +
+		"📊 *Stats* - View user statistics"
 
+	keyboard := [][]telego.InlineKeyboardButton{
+		{
+			{Text: "🔍 Search Users", CallbackData: "users_search"},
+			{Text: "➕ Add Balance", CallbackData: "users_add_balance"},
+		},
+		{
+			{Text: "➖ Deduct Balance", CallbackData: "users_deduct_balance"},
+			{Text: "📋 List All", CallbackData: "users_list"},
+		},
+		{
+			{Text: "📊 User Stats", CallbackData: "users_stats"},
+			{Text: "🔙 Back to Menu", CallbackData: "back_to_menu"},
+		},
+	}
+
+	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+}
 
 // ============ HANDLE ADD BALANCE FLOW ============
 
@@ -243,6 +268,7 @@ func (b *Bot) findUsersByQuery(ctx context.Context, query string) []models.User 
 	
 	return users
 }
+
 // ============ LIST USERS ============
 
 func (b *Bot) listUsers(ctx context.Context, chatID int64, page int) {
@@ -317,7 +343,7 @@ func (b *Bot) listUsers(ctx context.Context, chatID int64, page int) {
 	keyboard = append(keyboard, navRow)
 
 	keyboard = append(keyboard, []telego.InlineKeyboardButton{
-		{Text: "🔙 Back to Menu", CallbackData: "users_menu"},
+		{Text: "🔙 Back to Menu", CallbackData: "back_to_menu"},
 	})
 
 	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
@@ -375,7 +401,7 @@ func (b *Bot) showSearchResults(ctx context.Context, chatID int64, query string,
 	keyboard := [][]telego.InlineKeyboardButton{
 		{
 			{Text: "👤 View User", CallbackData: "users_view_prompt"},
-			{Text: "🔙 Back to Menu", CallbackData: "users_menu"},
+			{Text: "🔙 Back to Menu", CallbackData: "back_to_menu"},
 		},
 		{
 			{Text: "🔍 New Search", CallbackData: "users_search"},
@@ -409,7 +435,7 @@ func (b *Bot) showNoResultsFound(ctx context.Context, chatID int64, query string
 	keyboard := [][]telego.InlineKeyboardButton{
 		{
 			{Text: "🔍 New Search", CallbackData: "users_search"},
-			{Text: "🔙 Back to Menu", CallbackData: "users_menu"},
+			{Text: "🔙 Back to Menu", CallbackData: "back_to_menu"},
 		},
 	}
 
@@ -545,7 +571,7 @@ func (b *Bot) viewUser(ctx context.Context, chatID int64, telegramID int64) {
 			{Text: "📊 Full Stats", CallbackData: fmt.Sprintf("user_stats_%d", user.TelegramID)},
 		},
 		{
-			{Text: "🔙 Back to Menu", CallbackData: "users_menu"},
+			{Text: "🔙 Back to Menu", CallbackData: "back_to_menu"},
 		},
 	}
 
@@ -608,7 +634,7 @@ func (b *Bot) showUserStats(ctx context.Context, chatID int64) {
 
 	keyboard := [][]telego.InlineKeyboardButton{
 		{{Text: "🔄 Refresh", CallbackData: "users_stats"}},
-		{{Text: "🔙 Back to Menu", CallbackData: "users_menu"}},
+		{{Text: "🔙 Back to Menu", CallbackData: "back_to_menu"}},
 	}
 
 	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)

@@ -445,29 +445,3 @@ func (b *Bot) handleUserCallbacks(ctx context.Context, query *telego.CallbackQue
 		}
 	}
 }
-func (b *Bot) showUsersMenu(ctx context.Context, chatID int64) {
-	text := "👥 *User Management*\n\n" +
-		"Select an action below:\n\n" +
-		"🔍 *Search* - Find users by phone/username\n" +
-		"➕ *Add Balance* - Add balance to a user\n" +
-		"➖ *Deduct Balance* - Deduct balance from a user\n" +
-		"📋 *List* - View all users\n" +
-		"📊 *Stats* - View user statistics"
-
-	keyboard := [][]telego.InlineKeyboardButton{
-		{
-			{Text: "🔍 Search Users", CallbackData: "users_search"},
-			{Text: "➕ Add Balance", CallbackData: "users_add_balance"},
-		},
-		{
-			{Text: "➖ Deduct Balance", CallbackData: "users_deduct_balance"},
-			{Text: "📋 List All", CallbackData: "users_list"},
-		},
-		{
-			{Text: "📊 User Stats", CallbackData: "users_stats"},
-			{Text: "🔙 Back to Menu", CallbackData: "back_to_menu"}, // Changed from "users_menu"
-		},
-	}
-
-	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
-}
