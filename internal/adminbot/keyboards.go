@@ -3,6 +3,7 @@ package adminbot
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/mymmrac/telego"
 )
@@ -76,5 +77,24 @@ func (b *Bot) transactionActionKeyboard(txID string, txType string) *telego.Inli
                 },
             },
         },
+    }
+}
+// sendMarkdownKeyboard - Send a markdown message with inline keyboard
+func (b *Bot) sendMarkdownKeyboard(ctx context.Context, chatID int64, text string, keyboard [][]telego.InlineKeyboardButton) {
+    params := &telego.SendMessageParams{
+        ChatID:    telego.ChatID{ID: chatID},
+        Text:      text,
+        ParseMode: "Markdown",
+    }
+    
+    if len(keyboard) > 0 {
+        params.ReplyMarkup = &telego.InlineKeyboardMarkup{
+            InlineKeyboard: keyboard,
+        }
+    }
+    
+    _, err := b.api.SendMessage(ctx, params)
+    if err != nil {
+        log.Printf("Failed to send markdown keyboard message to %d: %v", chatID, err)
     }
 }
