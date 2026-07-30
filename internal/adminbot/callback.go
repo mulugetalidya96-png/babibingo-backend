@@ -42,6 +42,18 @@ func (b *Bot) handleCallback(ctx context.Context, callback *telego.CallbackQuery
 		return
 	}
 
+	// ✅ USERS menu navigation - Check this first
+	if strings.HasPrefix(data, "users_") || strings.HasPrefix(data, "user_") {
+		b.handleUserCallbacks(ctx, callback)
+		return
+	}
+
+	// ✅ AGENTS menu navigation
+	if strings.HasPrefix(data, "agents_") {
+		b.handleAgentCallbacks(ctx, callback)
+		return
+	}
+
 	// ✅ Deposits menu navigation
 	if strings.HasPrefix(data, "deposits_") {
 		b.handleDepositsCallback(ctx, chatID, data)
@@ -59,24 +71,14 @@ func (b *Bot) handleCallback(ctx context.Context, callback *telego.CallbackQuery
 		b.handleBotsCallback(ctx, chatID, data)
 		return
 	}
-    // ✅ USERS menu navigation - ADD THIS
-	if strings.HasPrefix(data, "users_") || strings.HasPrefix(data, "user_") {
-		b.handleUserCallbacks(ctx, callback)
-		return
-	}
-	// ✅ Back to menu
-	if data == "back_to_menu" {
+
+	// ✅ Back to menu - Check after all specific handlers
+	if data == "back_to_menu" || data == "back_to_main" {
 		b.showDashboard(ctx, chatID)
 		return
 	}
-	// ✅ AGENTS menu navigation - ADD THIS
-	if strings.HasPrefix(data, "agents_") {
-		b.handleAgentCallbacks(ctx, callback)
-		return
-	}
 
-
-	// Agent actions
+	// Agent actions (legacy)
 	if strings.HasPrefix(data, "approve_") || strings.HasPrefix(data, "reject_") || strings.HasPrefix(data, "view_") {
 		parts := strings.Split(data, "_")
 		if len(parts) < 2 {
@@ -114,8 +116,11 @@ func (b *Bot) handleCallback(ctx context.Context, callback *telego.CallbackQuery
 		}
 		return
 	}
+	
+	// Unknown callback
+	log.Printf("Unknown callback data: %s", data)
+	b.sendText(ctx, chatID, "❌ Unknown action.")
 }
-
 // ✅ handleMenuNavigation - Main menu navigation
 func (b *Bot) handleMenuNavigation(ctx context.Context, chatID int64, data string) {
 	switch data {
@@ -344,7 +349,6 @@ func (b *Bot) handleUserCallbacks(ctx context.Context, query *telego.CallbackQue
 			b.showUserStats(ctx, chatID)
 			
 		case "page":
-			// FIX: parts[2] might not exist, check length first
 			if len(parts) > 2 {
 				page, err := strconv.Atoi(parts[2])
 				if err != nil {
@@ -353,6 +357,25 @@ func (b *Bot) handleUserCallbacks(ctx context.Context, query *telego.CallbackQue
 				}
 				b.listUsers(ctx, chatID, page)
 			}
+			
+		// ADD THESE MISSING CASES:
+		case "add":
+			// This handles "users_add" if used
+			b.handleAddBalanceFlow(ctx, chatID)
+			
+		case "deduct":
+			// This handles "users_deduct" if used
+			b.handleDeductBalanceFlow(ctx, chatID)
+			
+		case "view_prompt":
+			b.sendMarkdown(ctx, chatID,
+				"👤 *View User*\n\n"+
+					"Please enter the Telegram ID of the user to view:\n\n"+
+					"📌 Example: `123456789`")
+			b.tempState.Store(chatID, "awaiting_view_user")
+			
+		case "current":
+			// Do nothing, just show current page
 		}
 
 	case "user":
@@ -368,20 +391,40 @@ func (b *Bot) handleUserCallbacks(ctx context.Context, query *telego.CallbackQue
 
 		switch parts[1] {
 		case "add":
+			// Check if user exists first
+			var user models.User
+			if err := b.db.Where("telegram_id = ?", targetUserID).First(&user).Error; err != nil {
+				b.sendText(ctx, chatID, "❌ User not found.")
+				return
+			}
+			
 			b.sendMarkdown(ctx, chatID, fmt.Sprintf(
 				"💰 *Add Balance*\n\n"+
-					"Enter the amount to add for user `%d`:\n\n"+
+					"👤 User: @%s\n"+
+					"💰 Current Balance: %.2f ETB\n\n"+
+					"Enter the amount to add:\n\n"+
 					"📌 Example: `100` or `50.5`",
-				targetUserID,
+				user.Username,
+				user.Balance,
 			))
 			b.tempState.Store(chatID, fmt.Sprintf("awaiting_add_balance_amount_%d", targetUserID))
 
 		case "deduct":
+			// Check if user exists first
+			var user models.User
+			if err := b.db.Where("telegram_id = ?", targetUserID).First(&user).Error; err != nil {
+				b.sendText(ctx, chatID, "❌ User not found.")
+				return
+			}
+			
 			b.sendMarkdown(ctx, chatID, fmt.Sprintf(
 				"💰 *Deduct Balance*\n\n"+
-					"Enter the amount to deduct for user `%d`:\n\n"+
+					"👤 User: @%s\n"+
+					"💰 Current Balance: %.2f ETB\n\n"+
+					"Enter the amount to deduct:\n\n"+
 					"📌 Example: `100` or `50.5`",
-				targetUserID,
+				user.Username,
+				user.Balance,
 			))
 			b.tempState.Store(chatID, fmt.Sprintf("awaiting_deduct_balance_amount_%d", targetUserID))
 
@@ -401,4 +444,30 @@ func (b *Bot) handleUserCallbacks(ctx context.Context, query *telego.CallbackQue
 			b.showUserFullStats(ctx, chatID, targetUserID)
 		}
 	}
+}
+func (b *Bot) showUsersMenu(ctx context.Context, chatID int64) {
+	text := "👥 *User Management*\n\n" +
+		"Select an action below:\n\n" +
+		"🔍 *Search* - Find users by phone/username\n" +
+		"➕ *Add Balance* - Add balance to a user\n" +
+		"➖ *Deduct Balance* - Deduct balance from a user\n" +
+		"📋 *List* - View all users\n" +
+		"📊 *Stats* - View user statistics"
+
+	keyboard := [][]telego.InlineKeyboardButton{
+		{
+			{Text: "🔍 Search Users", CallbackData: "users_search"},
+			{Text: "➕ Add Balance", CallbackData: "users_add_balance"},
+		},
+		{
+			{Text: "➖ Deduct Balance", CallbackData: "users_deduct_balance"},
+			{Text: "📋 List All", CallbackData: "users_list"},
+		},
+		{
+			{Text: "📊 User Stats", CallbackData: "users_stats"},
+			{Text: "🔙 Back to Menu", CallbackData: "back_to_menu"}, // Changed from "users_menu"
+		},
+	}
+
+	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
 }
