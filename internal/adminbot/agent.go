@@ -580,9 +580,14 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64) {
 		return
 	}
 
+	// Show only first 10 requests with pagination
+	limit := 10
+	
+	
 	text := fmt.Sprintf("📋 *Pending Applications*\n\nTotal: %d\n\n", len(requests))
 	
-	for _, req := range requests {
+	for i := 0; i < len(requests) && i < limit; i++ {
+		req := requests[i]
 		text += fmt.Sprintf(
 			"📌 #%d\n"+
 			"👤 @%s\n"+
@@ -595,22 +600,33 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64) {
 			formatPhoneNumber(req.PhoneNumber),
 			req.CreatedAt.Format("Jan 2, 2006 15:04"),
 		)
-		
-		// Add inline buttons for each request
-		keyboard := [][]telego.InlineKeyboardButton{
-			{
-				{Text: "✅ Approve", CallbackData: fmt.Sprintf("agents_approve_%d", req.ID)},
-				{Text: "❌ Reject", CallbackData: fmt.Sprintf("agents_reject_%d", req.ID)},
-			},
-			{
-				{Text: "👤 View Details", CallbackData: fmt.Sprintf("agents_view_%d", req.ID)},
-			},
-		}
-		
-		b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
 	}
+	
+	if len(requests) > limit {
+		text += fmt.Sprintf("... and %d more pending requests.\n\n", len(requests)-limit)
+	}
+	
+	// Create inline keyboard with action buttons
+	var keyboard [][]telego.InlineKeyboardButton
+	
+	// Add action buttons for the first request (or a selection mechanism)
+	if len(requests) > 0 {
+		req := requests[0]
+		keyboard = append(keyboard, []telego.InlineKeyboardButton{
+			{Text: "✅ Approve", CallbackData: fmt.Sprintf("agents_approve_%d", req.ID)},
+			{Text: "❌ Reject", CallbackData: fmt.Sprintf("agents_reject_%d", req.ID)},
+		})
+		keyboard = append(keyboard, []telego.InlineKeyboardButton{
+			{Text: "👤 View Details", CallbackData: fmt.Sprintf("agents_view_%d", req.ID)},
+		})
+	}
+	
+	keyboard = append(keyboard, []telego.InlineKeyboardButton{
+		{Text: "🔙 Back to Agents", CallbackData: "agents_menu"},
+	})
+	
+	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
 }
-
 // ============ ALL AGENTS ============
 
 func (b *Bot) showAllAgents(ctx context.Context, chatID int64) {

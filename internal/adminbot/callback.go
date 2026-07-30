@@ -59,12 +59,22 @@ func (b *Bot) handleCallback(ctx context.Context, callback *telego.CallbackQuery
 		b.handleBotsCallback(ctx, chatID, data)
 		return
 	}
-
+    // ✅ USERS menu navigation - ADD THIS
+	if strings.HasPrefix(data, "users_") || strings.HasPrefix(data, "user_") {
+		b.handleUserCallbacks(ctx, callback)
+		return
+	}
 	// ✅ Back to menu
 	if data == "back_to_menu" {
 		b.showDashboard(ctx, chatID)
 		return
 	}
+	// ✅ AGENTS menu navigation - ADD THIS
+	if strings.HasPrefix(data, "agents_") {
+		b.handleAgentCallbacks(ctx, callback)
+		return
+	}
+
 
 	// Agent actions
 	if strings.HasPrefix(data, "approve_") || strings.HasPrefix(data, "reject_") || strings.HasPrefix(data, "view_") {
@@ -303,6 +313,10 @@ func (b *Bot) handleUserCallbacks(ctx context.Context, query *telego.CallbackQue
 
 	switch parts[0] {
 	case "users":
+		if len(parts) < 2 {
+			return
+		}
+		
 		switch parts[1] {
 		case "menu":
 			b.showUsersMenu(ctx, chatID)
@@ -330,8 +344,13 @@ func (b *Bot) handleUserCallbacks(ctx context.Context, query *telego.CallbackQue
 			b.showUserStats(ctx, chatID)
 			
 		case "page":
+			// FIX: parts[2] might not exist, check length first
 			if len(parts) > 2 {
-				page, _ := strconv.Atoi(parts[2])
+				page, err := strconv.Atoi(parts[2])
+				if err != nil {
+					b.sendText(ctx, chatID, "❌ Invalid page number")
+					return
+				}
 				b.listUsers(ctx, chatID, page)
 			}
 		}
