@@ -196,19 +196,25 @@ func (b *Bot) handleTelebirrSMS(
 		return
 	}
 
-	// 1️⃣3️⃣ Update user balance
-	dbUser.Balance += txnInfo.Amount
+	// ✅ 1️⃣3️⃣ Calculate bonus (10%)
+	baseAmount := txnInfo.Amount
+	bonusPercentage := 0.10 // 10%
+	bonusAmount := baseAmount * bonusPercentage
+	totalAmount := baseAmount + bonusAmount
+
+	// 1️⃣4️⃣ Update user balance with bonus
+	dbUser.Balance += totalAmount
 	if err := b.db.Save(&dbUser).Error; err != nil {
 		log.Printf("Failed to update balance: %v", err)
 		b.sendText(ctx, chatID, "❌ Failed to update balance. Please contact support.")
 		return
 	}
 
-	// 1️⃣4️⃣ Create transaction record
+	// 1️⃣5️⃣ Create transaction record for deposit
 	transaction := models.Transaction{
 		UserID:    dbUser.ID,
 		Type:      "deposit",
-		Amount:    txnInfo.Amount,
+		Amount:    baseAmount,
 		Status:    "completed",
 		Method:    "telebirr",
 		Reference: txnInfo.TransactionID,
@@ -226,15 +232,35 @@ func (b *Bot) handleTelebirrSMS(
 		return
 	}
 
-	// 1️⃣5️⃣ Send success message
+	// ✅ 1️⃣6️⃣ Create bonus transaction record
+	bonusTransaction := models.Transaction{
+		UserID:    dbUser.ID,
+		Type:      "bonus",
+		Amount:    bonusAmount,
+		Status:    "completed",
+		Method:    "telebirr",
+		Reference: fmt.Sprintf("BONUS_%s", txnInfo.TransactionID),
+		Description: fmt.Sprintf("10%% bonus on Telebirr deposit - Transaction: %s", txnInfo.TransactionID),
+		CreatedAt: time.Now(),
+	}
+	if err := b.db.Create(&bonusTransaction).Error; err != nil {
+		log.Printf("Failed to create bonus transaction record: %v", err)
+		// Non-critical, continue
+	}
+
+	// 1️⃣7️⃣ Send success message with bonus details
 	b.sendMarkdown(ctx, chatID, fmt.Sprintf(
-		"✅ *Deposit Successful!*\n\n"+
-			"💰 Amount: %.2f ETB\n"+
+		"✅ *Deposit Successful!* 🎉\n\n"+
+			"💰 Deposit Amount: %.2f ETB\n"+
+			"🎁 *Bonus (10%%): +%.2f ETB*\n"+
+			"💎 *Total Added: %.2f ETB*\n\n"+
 			"🆔 Transaction: `%s`\n"+
-			"📱 Sent to: %s\n"+
-			"💳 New Balance: %.2f ETB\n\n"+
+			"📱 Sent to: %s\n\n"+
+			"💳 *New Balance: %.2f ETB*\n\n"+
 			"🎮 Play now from the menu!",
-		txnInfo.Amount,
+		baseAmount,
+		bonusAmount,
+		totalAmount,
 		txnInfo.TransactionID,
 		babiBingoPhone,
 		dbUser.Balance,
@@ -355,19 +381,25 @@ func (b *Bot) handleCBEBirrSMS(
 		return
 	}
 
-	// 1️⃣3️⃣ Update user balance
-	dbUser.Balance += txnInfo.Amount
+	// ✅ 1️⃣3️⃣ Calculate bonus (10%)
+	baseAmount := txnInfo.Amount
+	bonusPercentage := 0.10 // 10%
+	bonusAmount := baseAmount * bonusPercentage
+	totalAmount := baseAmount + bonusAmount
+
+	// 1️⃣4️⃣ Update user balance with bonus
+	dbUser.Balance += totalAmount
 	if err := b.db.Save(&dbUser).Error; err != nil {
 		log.Printf("Failed to update balance: %v", err)
 		b.sendText(ctx, chatID, "❌ Failed to update balance. Please contact support.")
 		return
 	}
 
-	// 1️⃣4️⃣ Create transaction record
+	// 1️⃣5️⃣ Create transaction record for deposit
 	transaction := models.Transaction{
 		UserID:      dbUser.ID,
 		Type:        "deposit",
-		Amount:      txnInfo.Amount,
+		Amount:      baseAmount,
 		Status:      "completed",
 		Method:      "cbebirr",
 		Reference:   txnInfo.TransactionID,
@@ -384,17 +416,37 @@ func (b *Bot) handleCBEBirrSMS(
 		return
 	}
 
-	// 1️⃣5️⃣ Send success message
+	// ✅ 1️⃣6️⃣ Create bonus transaction record
+	bonusTransaction := models.Transaction{
+		UserID:      dbUser.ID,
+		Type:        "bonus",
+		Amount:      bonusAmount,
+		Status:      "completed",
+		Method:      "cbebirr",
+		Reference:   fmt.Sprintf("BONUS_%s", txnInfo.TransactionID),
+		Description: fmt.Sprintf("10%% bonus on CBE Birr deposit - Transaction: %s", txnInfo.TransactionID),
+		CreatedAt:   time.Now(),
+	}
+	if err := b.db.Create(&bonusTransaction).Error; err != nil {
+		log.Printf("Failed to create bonus transaction record: %v", err)
+		// Non-critical, continue
+	}
+
+	// 1️⃣7️⃣ Send success message with bonus details
 	b.sendMarkdown(ctx, chatID, fmt.Sprintf(
-		"✅ *Deposit Successful!*\n\n"+
-			"💰 Amount: %.2f ETB\n"+
+		"✅ *Deposit Successful!* 🎉\n\n"+
+			"💰 Deposit Amount: %.2f ETB\n"+
+			"🎁 *Bonus (10%%): +%.2f ETB*\n"+
+			"💎 *Total Added: %.2f ETB*\n\n"+
 			"🆔 Transaction: `%s`\n"+
 			"📱 Sent via: CBE Birr\n"+
 			"📤 Sent to: %s\n"+
-			"📱 Phone: %s\n"+
-			"💳 New Balance: %.2f ETB\n\n"+
+			"📱 Phone: %s\n\n"+
+			"💳 *New Balance: %.2f ETB*\n\n"+
 			"🎮 Play now from the menu!",
-		txnInfo.Amount,
+		baseAmount,
+		bonusAmount,
+		totalAmount,
 		txnInfo.TransactionID,
 		businessName,
 		txnInfo.PhoneNumber,

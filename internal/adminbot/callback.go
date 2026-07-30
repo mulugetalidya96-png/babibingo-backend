@@ -195,6 +195,7 @@ func (b *Bot) handleGamesCallback(ctx context.Context, chatID int64, data string
 // ✅ handleBotsCallback - Bots menu callbacks
 // callback.go - Update handleBotsCallback
 
+// ✅ handleBotsCallback - Bots menu callbacks (UPDATED with 200 limit)
 func (b *Bot) handleBotsCallback(ctx context.Context, chatID int64, data string) {
 	switch data {
 	case "bots_status":
@@ -202,7 +203,15 @@ func (b *Bot) handleBotsCallback(ctx context.Context, chatID int64, data string)
 	case "bots_refresh":
 		b.showBotStatus(ctx, chatID)
 	case "bots_set_prompt":
-		b.sendText(ctx, chatID, "📝 Please enter the desired bot count (1-100):\n\nExample: /bots set 30")
+		// ✅ Updated to show 1-200 range
+		b.sendMarkdown(
+			ctx,
+			chatID,
+			"📝 *Set Bot Count*\n\n"+
+				"Please enter the desired number of bots (1-200).\n\n"+
+				"Example: `30`",
+		)
+		b.tempState.Store(chatID, "awaiting_bot_count")
 	case "bots_add_5":
 		b.addBots(ctx, chatID, 5)
 	case "bots_add_10":

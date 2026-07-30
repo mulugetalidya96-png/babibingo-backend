@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 
 	"babibingo/internal/models"
 
@@ -22,6 +23,12 @@ var defaultRobotSettings = RobotSettings{
 
 // handleBots - Main bot handler
 func (b *Bot) handleBots(ctx context.Context, chatID int64, args []string) {
+	// ✅ Check if we're waiting for input first
+	if state, ok := b.tempState.Load(chatID); ok && state == "awaiting_bot_count" {
+		b.handleBotCountInput(ctx, chatID, strings.Join(args, " "))
+		return
+	}
+
 	if len(args) == 0 {
 		b.showBotStatus(ctx, chatID)
 		return
@@ -29,31 +36,21 @@ func (b *Bot) handleBots(ctx context.Context, chatID int64, args []string) {
 
 	switch args[0] {
 	case "set":
-		if len(args) > 1 {
-			count, err := strconv.Atoi(args[1])
-			if err != nil || count < 1 || count > 100 {
-				b.sendText(ctx, chatID, "❌ Invalid count. Please enter a number between 1 and 100.\n\nExample: /bots set 30")
-				return
-			}
-			b.setBotCount(ctx, chatID, count)
-			// ✅ Clear the user's state after setting
-			b.tempState.Delete(chatID)
-		} else {
-			// ✅ Prompt user to enter a number
-			b.sendMarkdown(
-				ctx,
-				chatID,
-				"📝 *Set Bot Count*\n\n"+
-					"Please enter the desired number of bots (1-100).\n\n"+
-					"Example: `30`",
-			)
-			// ✅ Store that we're waiting for a count
-			b.tempState.Store(chatID, "awaiting_bot_count")
-		}
+		// ✅ Always prompt for count (no inline args)
+		b.sendMarkdown(
+			ctx,
+			chatID,
+			"📝 *Set Bot Count*\n\n"+
+				"Please enter the desired number of bots (1-200).\n\n"+
+				"Example: `30`",
+		)
+		b.tempState.Store(chatID, "awaiting_bot_count")
+		
 	case "status":
 		b.showBotStatus(ctx, chatID)
+		
 	default:
-		b.sendText(ctx, chatID, "❌ Unknown command.\n\nAvailable:\n/bots status - Show bot status\n/bots set <count> - Set bot count (1-100)")
+		b.sendText(ctx, chatID, "❌ Unknown command.\n\nAvailable:\n/bots status - Show bot status\n/bots set - Set bot count (1-200)")
 	}
 }
 
@@ -150,7 +147,7 @@ func (b *Bot) showBotStatus(ctx context.Context, chatID int64) {
 	b.sendMessage(ctx, &msg)
 }
 
-// ✅ setBotCount - Set desired number of bots
+// ✅ setBotCount - Set desired number of bots (UPDATED: max 200)
 func (b *Bot) setBotCount(ctx context.Context, chatID int64, count int) {
 	if b.engine == nil {
 		b.sendText(ctx, chatID, "❌ Game engine not available.")
@@ -163,12 +160,12 @@ func (b *Bot) setBotCount(ctx context.Context, chatID int64, count int) {
 		return
 	}
 
-	// Validate count
+	// ✅ Updated validation: 1-200
 	if count < 1 {
 		count = 1
 	}
-	if count > 100 {
-		count = 100
+	if count > 200 {
+		count = 200
 	}
 
 	botManager.SetDesiredCount(count)
@@ -180,7 +177,7 @@ func (b *Bot) setBotCount(ctx context.Context, chatID int64, count int) {
 		chatID,
 		fmt.Sprintf(
 			"✅ *Bot Count Updated*\n\n"+
-				"🎯 Target bot count per game set to: *%d*\n\n"+
+				"🎯 Target bot count set to: *%d*\n\n"+
 				"📊 Current bots: %d\n"+
 				"⚠️ Bots will automatically adjust to reach this target.",
 			count,
@@ -189,7 +186,7 @@ func (b *Bot) setBotCount(ctx context.Context, chatID int64, count int) {
 	)
 }
 
-// ✅ addBots - Add a specific number of bots
+// ✅ addBots - Add a specific number of bots (UPDATED: max 200)
 func (b *Bot) addBots(ctx context.Context, chatID int64, count int) {
 	if b.engine == nil {
 		b.sendText(ctx, chatID, "❌ Game engine not available.")
@@ -204,9 +201,11 @@ func (b *Bot) addBots(ctx context.Context, chatID int64, count int) {
 
 	currentCount := b.getCurrentBotCount()
 	newCount := currentCount + count
-	if newCount > 100 {
-		newCount = 100
-		b.sendText(ctx, chatID, fmt.Sprintf("⚠️ Max bots is 100. Setting to 100."))
+	
+	// ✅ Updated max to 200
+	if newCount > 200 {
+		newCount = 200
+		b.sendText(ctx, chatID, fmt.Sprintf("⚠️ Max bots is 200. Setting to 200."))
 	}
 
 	botManager.SetDesiredCount(newCount)
@@ -282,16 +281,19 @@ func (b *Bot) getDesiredBotCount() int {
 	return defaultRobotSettings.DesiredCount
 }
 
-// ✅ handleBotCountInput - Handle user input for bot count
+// ✅ handleBotCountInput - Handle user input for bot count (UPDATED: max 200)
 func (b *Bot) handleBotCountInput(ctx context.Context, chatID int64, text string) {
+	// Trim whitespace
+	text = strings.TrimSpace(text)
+	
 	// Parse the number
 	count, err := strconv.Atoi(text)
-	if err != nil || count < 1 || count > 100 {
-		b.sendText(ctx, chatID, "❌ Invalid count. Please enter a number between 1 and 100.\n\nExample: `30`")
+	if err != nil || count < 1 || count > 200 {
+		b.sendText(ctx, chatID, "❌ Invalid count. Please enter a number between 1 and 200.\n\nExample: `30`")
 		return
 	}
 
-	// Set the count
+	// Set the count using the admin bot package
 	b.setBotCount(ctx, chatID, count)
 	
 	// Clear the state

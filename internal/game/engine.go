@@ -23,7 +23,7 @@ const (
 	StakeAmount        = 20.0
 	MaxCardsPerPlayer  = 4
 	MaxPlayers         = 400
-	HouseCutPercent    = 0.10 // 10% house cut
+	HouseCutPercent    = 0.20 // 10% house cut
 )
 
 // Engine is the main game engine
