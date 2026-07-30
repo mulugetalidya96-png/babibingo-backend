@@ -72,7 +72,7 @@ func (bm *BotManager) loadDesiredCount() {
 	}
 }
 
-// saveDesiredCount - Save to database
+// saveDesiredCount - Save to databas
 func (bm *BotManager) saveDesiredCount() {
 	count := int(atomic.LoadInt32(&bm.desiredCount))
 
@@ -95,7 +95,7 @@ func (bm *BotManager) SetDesiredCount(count int) {
 	if count < 0 {
 		count = 0
 	}
-	if count > 100 {
+	if count > 200 {
 		count = 200
 	}
 	atomic.StoreInt32(&bm.desiredCount, int32(count))
@@ -112,6 +112,27 @@ func (bm *BotManager) GetDesiredCount() int {
 		return 20
 	}
 	return int(atomic.LoadInt32(&bm.desiredCount))
+}
+// ActiveBotReservations returns the number of bot cards
+// reserved in the current game.
+func (bm *BotManager) ActiveBotReservations() int {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+
+	if bm.engine == nil || bm.engine.currentGame == nil {
+		return 0
+	}
+
+	currentGameID := bm.engine.currentGame.Game.ID.String()
+
+	count := 0
+	for _, bot := range bm.bots {
+		if bot.GameID == currentGameID {
+			count++
+		}
+	}
+
+	return count
 }
 
 // getOrCreateBotUsers gets or creates bot users
@@ -222,12 +243,7 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 		count = MaxPlayers - currentPlayers
 	}
 
-	// Don't exceed desired count (using atomic)
-	desiredCount := bm.GetDesiredCount()
-	if currentPlayers+count > desiredCount {
-		count = desiredCount - currentPlayers
-	}
-
+	
 	if count <= 0 {
 		return
 	}
@@ -433,40 +449,42 @@ func (bm *BotManager) checkAndReserveBots() {
 	}
 
 	state := engine.currentGame
+
 	state.mu.RLock()
 	if state.Game.Status != GameStatusWaiting {
 		state.mu.RUnlock()
 		return
 	}
 
-	currentPlayers := len(state.UserCards)
-	availableCount := 400 - len(state.ReservedCards)
-	desiredCount := bm.GetDesiredCount()
+	availableCards := 400 - len(state.ReservedCards)
 	state.mu.RUnlock()
 
-	// Don't add bots if we already have enough
-	if currentPlayers >= desiredCount {
+	if availableCards == 0 {
 		return
 	}
 
-	// Don't add bots if there aren't enough available cards
-	if availableCount < 2 {
+	desiredBots := bm.GetDesiredCount()
+	currentBots := bm.ActiveBotReservations()
+
+	// Already have enough bot reservations
+	if currentBots >= desiredBots {
 		return
 	}
 
-	// Calculate how many bots to add to reach desired count
-	needed := desiredCount - currentPlayers
-	if needed > availableCount {
-		needed = availableCount
+	needed := desiredBots - currentBots
+
+	// Can't reserve more than available
+	if needed > availableCards {
+		needed = availableCards
 	}
 
-	// Add 1-3 bots at a time (slowly reach target)
+	// Reserve gradually
 	if needed > 3 {
-		needed = rand.Intn(3) + 1 // 1-3 bots
+		needed = rand.Intn(3) + 1
 	}
 
-	// Add bots with some randomness (30% chance per tick)
-	if rand.Float32() < 0.3 {
+	// 30% chance every tick
+	if rand.Float32() < 0.30 {
 		bm.ReserveCardsForBots(needed)
 	}
 }
