@@ -39,6 +39,11 @@ func (b *Bot) handleMessage(ctx context.Context, msg *telego.Message) {
     }
 
     b.sendAdminMenu(ctx, chatID)
+
+     b.handleUserTextInput(ctx, chatID, text)
+    
+    // Also check for agent text input
+    b.handleAgentTextInput(ctx, chatID, text)
     
 }
 
