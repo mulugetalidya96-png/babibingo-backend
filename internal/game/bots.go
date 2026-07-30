@@ -466,29 +466,24 @@ func (bm *BotManager) checkAndReserveBots() {
 	desiredBots := bm.GetDesiredCount()
 	currentBots := bm.ActiveBotReservations()
 
-	// Already have enough bot reservations
 	if currentBots >= desiredBots {
 		return
 	}
 
 	needed := desiredBots - currentBots
 
-	// Can't reserve more than available
 	if needed > availableCards {
 		needed = availableCards
 	}
 
-	// Reserve gradually
-	if needed > 3 {
-		needed = rand.Intn(3) + 1
+	// Reserve up to 10 bots per tick.
+	const batchSize = 10
+	if needed > batchSize {
+		needed = batchSize
 	}
 
-	// 30% chance every tick
-	if rand.Float32() < 0.30 {
-		bm.ReserveCardsForBots(needed)
-	}
+	bm.ReserveCardsForBots(needed)
 }
-
 // GetBotStats - Updated to include desired count
 func (bm *BotManager) GetBotStats() map[string]interface{} {
 	bm.mu.RLock()
@@ -617,4 +612,10 @@ func generateReferralCode(existingCodes map[string]bool) string {
 			return code
 		}
 	}
+}
+func (bm *BotManager) ResetGameBots() {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+
+	bm.bots = bm.bots[:0]
 }

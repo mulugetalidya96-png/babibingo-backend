@@ -107,6 +107,9 @@ func (e *Engine) startNewGame() {
 		log.Printf("🔴 Failed to create game: %v", err)
 		return
 	}
+	if e.botManager != nil {
+	e.botManager.ResetGameBots()
+}
 
 	e.currentGame = &GameState{
 		Game:          game,
