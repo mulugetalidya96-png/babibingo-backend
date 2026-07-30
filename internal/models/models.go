@@ -108,6 +108,7 @@ type GamePlayer struct {
 	JoinedAt   time.Time `json:"joined_at"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+	IsBot      bool      `gorm:"default:false"`
 }
 
 // internal/models/models.go - Add this

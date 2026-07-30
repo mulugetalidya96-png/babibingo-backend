@@ -65,3 +65,4 @@ type GameStateResponse struct {
 	ReservedCards []int          `json:"reserved_cards"`
 	Balance       float64        `json:"balance"`
 }
+// models/game_player.go

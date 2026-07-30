@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// collectAllStakes collects stakes from all players with reservations
+// collectAllStakes collects stakes from all players with reservations (including bots)
 func (e *Engine) collectAllStakes(state *GameState) error {
 	// Get all unique Telegram IDs with reservations
 	telegramIDs := make(map[int64]bool)
@@ -24,7 +24,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 		return fmt.Errorf("no players to collect stakes from")
 	}
 
-	log.Printf("🟡 Collecting stakes from %d players", len(telegramIDs))
+	log.Printf("🟡 Collecting stakes from %d players (including bots)", len(telegramIDs))
 
 	tx := e.db.Begin()
 	defer func() {
@@ -36,6 +36,9 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 
 	totalPool := 0.0
 	commissionEarned := make(map[int64]float64) // Track commissions per agent (by Telegram ID)
+	realPlayerCount := 0
+	botPlayerCount := 0
+	var realUsers []models.User // Track real users for notifications
 
 	for telegramID := range telegramIDs {
 		cardCount := len(state.UserCards[telegramID])
@@ -43,12 +46,11 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 
 		log.Printf("🟡 User %d has %d cards, total stake: %.2f", telegramID, cardCount, totalStake)
 
-		// ✅ Get user by Telegram ID - Include is_bot check
+		// ✅ Get user by Telegram ID (include bots)
 		var user models.User
-		if err := tx.Where("telegram_id = ? AND is_bot = ?", telegramID, false).First(&user).Error; err != nil {
+		if err := tx.Where("telegram_id = ?", telegramID).First(&user).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				// ✅ Skip if user is a bot or doesn't exist
-				log.Printf("⚠️ User %d is a bot or not found, skipping stake deduction", telegramID)
+				log.Printf("⚠️ User %d not found, skipping", telegramID)
 				continue
 			}
 			tx.Rollback()
@@ -57,11 +59,91 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 
 		log.Printf("  ✅ Found user: ID=%d, TelegramID=%d, IsBot=%v", user.ID, user.TelegramID, user.IsBot)
 
-		// ✅ Skip bots (double-check)
+		// ✅ Check if user is a bot
 		if user.IsBot {
-			log.Printf("⚠️ User %d is a bot, skipping stake deduction", telegramID)
-			continue
+			botPlayerCount++
+			log.Printf("  🤖 Bot user %d, adding to pool without balance deduction", telegramID)
+			
+			// ✅ Bots don't need balance deduction (they have virtual balance)
+			// Just track their stake in the pool
+			
+			// Create transaction records for bots (for tracking)
+			for _, cardNumber := range state.UserCards[telegramID] {
+				reference := fmt.Sprintf("bot_stake_%s_%d_%d", 
+					state.Game.ID.String()[:8], 
+					user.ID, 
+					time.Now().UnixNano(),
+				)
+				transaction := models.Transaction{
+					UserID:      user.ID,
+					Type:        "stake",
+					Amount:      StakeAmount,
+					Status:      "completed",
+					Method:      "system",
+					Reference:   reference,
+					Description: fmt.Sprintf("Bot card #%d for game %s", cardNumber, state.Game.ID.String()),
+					CreatedAt:   time.Now(),
+				}
+				if err := tx.Create(&transaction).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to create bot transaction: %w", err)
+				}
+				log.Printf("  ✅ Created bot transaction for card #%d", cardNumber)
+			}
+
+			// ✅ Add bot's stake to pool
+			totalPool += totalStake
+
+			// Handle game_player record for bot
+			var gamePlayer models.GamePlayer
+			result := tx.Where("game_id = ? AND user_id = ?", state.Game.ID, user.ID).First(&gamePlayer)
+			
+			if result.Error != nil {
+				if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+					gamePlayer = models.GamePlayer{
+						GameID:     state.Game.ID,
+						UserID:     user.ID,
+						CardsCount: cardCount,
+						TotalStake: totalStake,
+						IsBot:      true,
+						CreatedAt:  time.Now(),
+					}
+					if err := tx.Create(&gamePlayer).Error; err != nil {
+						tx.Rollback()
+						return fmt.Errorf("failed to create bot game player: %w", err)
+					}
+					log.Printf("  ✅ Created new game_player for bot %d", user.ID)
+				} else {
+					tx.Rollback()
+					return fmt.Errorf("failed to query bot game player: %w", result.Error)
+				}
+			} else {
+				gamePlayer.CardsCount = cardCount
+				gamePlayer.TotalStake = totalStake
+				gamePlayer.IsBot = true
+				gamePlayer.UpdatedAt = time.Now()
+				if err := tx.Save(&gamePlayer).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to update bot game player: %w", err)
+				}
+				log.Printf("  ✅ Updated existing game_player for bot %d", user.ID)
+			}
+
+			// Update card status from "reserved" to "active"
+			if err := tx.Model(&models.Card{}).
+				Where("game_id = ? AND user_id = ?", state.Game.ID, user.ID).
+				Update("status", "active").Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to update bot card status: %w", err)
+			}
+			log.Printf("  ✅ Updated card status to 'active' for bot ID: %d", user.ID)
+
+			continue // Skip balance deduction for bots
 		}
+
+		// ✅ Real user - deduct balance
+		realPlayerCount++
+		realUsers = append(realUsers, user)
 
 		// Check balance
 		if user.Balance < totalStake {
@@ -163,6 +245,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 					UserID:     user.ID,
 					CardsCount: cardCount,
 					TotalStake: totalStake,
+					IsBot:      false,
 					CreatedAt:  time.Now(),
 				}
 				if err := tx.Create(&gamePlayer).Error; err != nil {
@@ -177,6 +260,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 		} else {
 			gamePlayer.CardsCount = cardCount
 			gamePlayer.TotalStake = totalStake
+			gamePlayer.IsBot = false
 			gamePlayer.UpdatedAt = time.Now()
 			if err := tx.Save(&gamePlayer).Error; err != nil {
 				tx.Rollback()
@@ -197,11 +281,38 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 		totalPool += totalStake
 	}
 
-	// ✅ Check if there are any real players (skip if only bots)
-	if totalPool == 0 {
-		tx.Rollback()
-		log.Println("⚠️ No real players found, cancelling game...")
-		return fmt.Errorf("no real players with sufficient balance")
+	// ✅ Log the final composition
+	log.Printf("📊 Game has %d real players and %d bot players", realPlayerCount, botPlayerCount)
+	log.Printf("💰 Total pool including bots: %.2f ETB", totalPool)
+
+	// ✅ Even if no real players, we should still show the total stake
+	// But we should not start the game if there are no real players
+	if realPlayerCount == 0 {
+		log.Printf("⚠️ No real players in the game, but total pool is %.2f ETB (all bots)", totalPool)
+		
+		// ✅ Still update the game with the pool
+		state.Game.TotalPool = totalPool
+		if err := tx.Save(state.Game).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update game pool: %w", err)
+		}
+		
+		if err := tx.Commit().Error; err != nil {
+			return fmt.Errorf("failed to commit transaction: %w", err)
+		}
+		
+		// ✅ Broadcast the pool update with bot-only pool
+		e.broadcast(GameEvent{
+			Type:      "pool.update",
+			GameID:    state.Game.ID.String(),
+			Pool:      totalPool,
+			GrossPool: totalPool,
+			HouseCut:  0,
+			Message:   fmt.Sprintf("💰 Total pool: %.2f ETB (bots only)", totalPool),
+		})
+		
+		// Return error to prevent game from starting
+		return fmt.Errorf("no real players found, game cancelled (pool: %.2f ETB)", totalPool)
 	}
 
 	// Update the game's total pool
@@ -215,7 +326,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Printf("✅ Collected total pool: %.2f", totalPool)
+	log.Printf("✅ Collected total pool: %.2f (including bots)", totalPool)
 
 	// ✅ Send balance updates to agents who earned commissions
 	for agentTelegramID, commissionAmount := range commissionEarned {
@@ -234,6 +345,16 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			}
 		}
 	}
+
+	// ✅ Broadcast final pool update
+	e.broadcast(GameEvent{
+		Type:      "pool.update",
+		GameID:    state.Game.ID.String(),
+		Pool:      totalPool,
+		GrossPool: totalPool,
+		HouseCut:  0,
+		Message:   fmt.Sprintf("💰 Total pool: %.2f ETB", totalPool),
+	})
 
 	return nil
 }
