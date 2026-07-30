@@ -29,6 +29,7 @@ type BotManager struct {
 type Bot struct {
 	User       *models.User
 	CardNumber int
+	GameID     string
 }
 
 // NewBotManager creates a new bot manager
@@ -40,13 +41,13 @@ func NewBotManager(engine *Engine) *BotManager {
 		desiredCount: 20,
 	}
 
-	// ✅ Load saved desired count from database
+	// Load saved desired count from database
 	bm.loadDesiredCount()
 
 	return bm
 }
 
-// ✅ loadDesiredCount - Load from database
+// loadDesiredCount - Load from database
 func (bm *BotManager) loadDesiredCount() {
 	var settings models.RobotBotSettings
 	err := bm.engine.db.First(&settings).Error
@@ -71,7 +72,7 @@ func (bm *BotManager) loadDesiredCount() {
 	}
 }
 
-// ✅ saveDesiredCount - Save to database
+// saveDesiredCount - Save to database
 func (bm *BotManager) saveDesiredCount() {
 	count := int(atomic.LoadInt32(&bm.desiredCount))
 	err := bm.engine.db.Model(&models.RobotBotSettings{}).First(&models.RobotBotSettings{}).
@@ -81,7 +82,7 @@ func (bm *BotManager) saveDesiredCount() {
 	}
 }
 
-// ✅ SetDesiredCount sets the desired number of bots per game (ATOMIC + PERSISTENT)
+// SetDesiredCount sets the desired number of bots per game (ATOMIC + PERSISTENT)
 func (bm *BotManager) SetDesiredCount(count int) {
 	if count < 0 {
 		count = 0
@@ -91,13 +92,13 @@ func (bm *BotManager) SetDesiredCount(count int) {
 	}
 	atomic.StoreInt32(&bm.desiredCount, int32(count))
 
-	// ✅ Save to database
+	// Save to database
 	bm.saveDesiredCount()
 
 	log.Printf("🤖 Desired bot count set to: %d", count)
 }
 
-// ✅ GetDesiredCount returns the desired number of bots per game (ATOMIC - NO MUTEX)
+// GetDesiredCount returns the desired number of bots per game (ATOMIC - NO MUTEX)
 func (bm *BotManager) GetDesiredCount() int {
 	if bm == nil {
 		return 20
@@ -105,11 +106,11 @@ func (bm *BotManager) GetDesiredCount() int {
 	return int(atomic.LoadInt32(&bm.desiredCount))
 }
 
-// ✅ Get or create bot users
+// getOrCreateBotUsers gets or creates bot users
 func (bm *BotManager) getOrCreateBotUsers(count int) ([]*models.User, error) {
 	var botUsers []*models.User
 
-	// ✅ First, try to find existing bots that are not currently in a game
+	// First, try to find existing bots that are not currently in a game
 	var existingBots []models.User
 	err := bm.engine.db.
 		Where("is_bot = ?", true).
@@ -121,7 +122,7 @@ func (bm *BotManager) getOrCreateBotUsers(count int) ([]*models.User, error) {
 		return nil, err
 	}
 
-	// ✅ If we have enough existing bots, use them
+	// If we have enough existing bots, use them
 	if len(existingBots) >= count {
 		for i := 0; i < count; i++ {
 			botUsers = append(botUsers, &existingBots[i])
@@ -130,7 +131,7 @@ func (bm *BotManager) getOrCreateBotUsers(count int) ([]*models.User, error) {
 		return botUsers, nil
 	}
 
-	// ✅ If we don't have enough, create new ones
+	// If we don't have enough, create new ones
 	needed := count - len(existingBots)
 	log.Printf("🤖 Need %d more bots, creating new ones", needed)
 
@@ -155,8 +156,10 @@ func (bm *BotManager) getOrCreateBotUsers(count int) ([]*models.User, error) {
 			LastName:     "",
 			PhoneNumber:  phone,
 			Balance:      1000.0,
+			AgentBalance: 0,
 			ReferralCode: referralCode,
 			IsBot:        true,
+			IsAgent:      false,
 			CreatedAt:    time.Now(),
 			LastActive:   time.Now(),
 		}
@@ -173,7 +176,7 @@ func (bm *BotManager) getOrCreateBotUsers(count int) ([]*models.User, error) {
 	return botUsers, nil
 }
 
-// ✅ ReserveCardsForBots - Updated to respect desired count
+// ReserveCardsForBots - Updated to respect desired count
 func (bm *BotManager) ReserveCardsForBots(count int) {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
@@ -211,7 +214,7 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 		count = MaxPlayers - currentPlayers
 	}
 
-	// ✅ Don't exceed desired count (using atomic)
+	// Don't exceed desired count (using atomic)
 	desiredCount := bm.GetDesiredCount()
 	if currentPlayers+count > desiredCount {
 		count = desiredCount - currentPlayers
@@ -221,7 +224,7 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 		return
 	}
 
-	// ✅ Get or create bot users
+	// Get or create bot users
 	botUsers, err := bm.getOrCreateBotUsers(count)
 	if err != nil {
 		log.Printf("⚠️ Failed to get bot users: %v", err)
@@ -254,6 +257,7 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 		bot := &Bot{
 			User:       user,
 			CardNumber: cardNumber,
+			GameID:     state.Game.ID.String(),
 		}
 		bm.bots = append(bm.bots, bot)
 		botsReserved++
@@ -413,7 +417,7 @@ func (bm *BotManager) StopBotRoutine() {
 	}
 }
 
-// ✅ checkAndReserveBots - Updated to use desired count
+// checkAndReserveBots - Updated to use desired count
 func (bm *BotManager) checkAndReserveBots() {
 	engine := bm.engine
 	if engine.currentGame == nil {
@@ -432,7 +436,7 @@ func (bm *BotManager) checkAndReserveBots() {
 	desiredCount := bm.GetDesiredCount()
 	state.mu.RUnlock()
 
-	// ✅ Don't add bots if we already have enough
+	// Don't add bots if we already have enough
 	if currentPlayers >= desiredCount {
 		return
 	}
@@ -442,13 +446,13 @@ func (bm *BotManager) checkAndReserveBots() {
 		return
 	}
 
-	// ✅ Calculate how many bots to add to reach desired count
+	// Calculate how many bots to add to reach desired count
 	needed := desiredCount - currentPlayers
 	if needed > availableCount {
 		needed = availableCount
 	}
 
-	// ✅ Add 1-3 bots at a time (slowly reach target)
+	// Add 1-3 bots at a time (slowly reach target)
 	if needed > 3 {
 		needed = rand.Intn(3) + 1 // 1-3 bots
 	}
@@ -459,19 +463,50 @@ func (bm *BotManager) checkAndReserveBots() {
 	}
 }
 
-// ✅ GetBotStats - Updated to include desired count
+// GetBotStats - Updated to include desired count
 func (bm *BotManager) GetBotStats() map[string]interface{} {
 	bm.mu.RLock()
 	defer bm.mu.RUnlock()
 
+	// Count active bots in games
+	activeBots := 0
+	for _, bot := range bm.bots {
+		if bot.GameID != "" {
+			activeBots++
+		}
+	}
+
 	return map[string]interface{}{
-		"total_bots":    len(bm.bots),
-		"is_running":    bm.isRunning,
-		"desired_count": int(atomic.LoadInt32(&bm.desiredCount)),
+		"total_bots":     len(bm.bots),
+		"active_bots":    activeBots,
+		"is_running":     bm.isRunning,
+		"desired_count":  int(atomic.LoadInt32(&bm.desiredCount)),
+		"available_bots": len(bm.bots) - activeBots,
 	}
 }
 
-// generateRandomName generates a random Ethiopian name
+// DeleteAllBotUsers deletes all bot users from the database
+func (bm *BotManager) DeleteAllBotUsers() error {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+
+	// Get count before deletion
+	var count int64
+	bm.engine.db.Model(&models.User{}).Where("is_bot = ?", true).Count(&count)
+
+	// Delete all bot users
+	result := bm.engine.db.Where("is_bot = ?", true).Delete(&models.User{})
+	if result.Error != nil {
+		return result.Error
+	}
+
+	// Clear bots from memory
+	bm.bots = make([]*Bot, 0)
+	log.Printf("🤖 Deleted %d bot users from database", result.RowsAffected)
+	return nil
+}
+
+// generateRandomName generates a random Ethiopian name (200+ unique combinations)
 func generateRandomName() string {
 	firstNames := []string{
 		"Abebe", "Almaz", "Biruk", "Chala", "Dawit",
@@ -479,13 +514,44 @@ func generateRandomName() string {
 		"Kidist", "Lemma", "Meron", "Nebiyu", "Oli",
 		"Rediet", "Sami", "Tigist", "Uriel", "Yonas",
 		"Zewdu", "Amanuel", "Bereket", "Chaltu", "Daniel",
+		"Elsabet", "Fikru", "Genet", "Henok", "Ibrahim",
+		"Jerusalem", "Kalkidan", "Lidya", "Mekdes", "Natnael",
+		"Omar", "Ruth", "Selam", "Tewodros", "Yared",
+		"Zebib", "Abel", "Bethel", "Chernet", "Dagim",
+		"Ermias", "Frehiwot", "Gebre", "Hirut", "Isayas",
+		"Jember", "Kifle", "Lulseged", "Mamo", "Negash",
+		"Rahel", "Semere", "Tigabu", "Wondimu", "Yohannes",
+		"Abdi", "Binyam", "Demissie", "Endale", "Fisseha",
+		"Getachew", "Habtamu", "Jemal", "Kassahun", "Leta",
+		"Mulugeta", "Netsanet", "Samuel", "Tesfaye", "Wubishet",
+		"Ayelech", "Berhan", "Chimdessa", "Debebe", "Esubalew",
+		"Fetlework", "Gudeta", "Hailu", "Ibsa", "Jemila",
+		"Kassu", "Lensa", "Mesfin", "Nigist", "Obsa",
+		"Pascal", "Qeshi", "Reta", "Sileshi", "Tinsae",
+		"Ubong", "Vivian", "Wesen", "Xavier", "Yemisrach",
+		"Zerihun", "Aragaw", "Bulti", "Chane", "Diriba",
 	}
 	lastNames := []string{
 		"Alemayehu", "Bekele", "Chala", "Demeke", "Eshetu",
 		"Girma", "Haile", "Kebede", "Lemma", "Mekonnen",
 		"Negash", "Tadesse", "Wolde", "Yilma", "Zelalem",
+		"Assefa", "Berhanu", "Desta", "Endale", "Fesseha",
+		"Gebre", "Hagos", "Kiros", "Melaku", "Nega",
+		"Admassu", "Ayele", "Benti", "Dinka", "Ejigu",
+		"Gemeda", "Hailu", "Jemaneh", "Kassaye", "Lema",
+		"Mamo", "Nuru", "Regassa", "Sisay", "Tekle",
+		"Umeta", "Wakjira", "Yigezu", "Zenebe", "Alem",
+		"Bogale", "Dibaba", "Gemechu", "Hundessa", "Jilo",
+		"Ketema", "Lelisa", "Merga", "Nuro", "Olana",
+		"Qalicha", "Roba", "Shiferaw", "Tulu", "Wakgari",
+		"Abdi", "Birhanu", "Degu", "Elias", "Guta",
+		"Habte", "Imana", "Jebena", "Kaba", "Leta",
+		"Mesa", "Nafisa", "Oda", "Pasha", "Qana",
+		"Raya", "Saba", "Tomi", "Ula", "Vera",
+		"Waga", "Xaba", "Yeka", "Zala", "Amsalu",
+		"Beyene", "Dagne", "Emiru", "Fanta", "Gashaw",
 	}
-
+	// Add unique combinations by shuffling
 	firstName := firstNames[rand.Intn(len(firstNames))]
 	lastName := lastNames[rand.Intn(len(lastNames))]
 	return firstName + " " + lastName
