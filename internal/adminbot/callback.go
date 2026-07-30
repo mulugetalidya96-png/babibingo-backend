@@ -286,3 +286,100 @@ func (b *Bot) approveWithdrawal(ctx context.Context, chatID int64, txID string) 
 func (b *Bot) rejectWithdrawal(ctx context.Context, chatID int64, txID string) {
 	b.rejectWithdraw(ctx, chatID, txID)
 }
+// ============ USER CALLBACK HANDLERS ============
+
+func (b *Bot) handleUserCallbacks(ctx context.Context, query *telego.CallbackQuery) {
+	data := query.Data
+	chatID := query.Message.GetChat().ID
+
+	b.api.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
+		CallbackQueryID: query.ID,
+	})
+
+	parts := strings.Split(data, "_")
+	if len(parts) < 2 {
+		return
+	}
+
+	switch parts[0] {
+	case "users":
+		switch parts[1] {
+		case "menu":
+			b.showUsersMenu(ctx, chatID)
+			
+		case "search":
+			b.sendMarkdown(ctx, chatID,
+				"🔍 *Search Users*\n\n"+
+					"📱 Just type the phone number, username, or name.\n\n"+
+					"💡 *Examples:*\n"+
+					"• `09847488474` → Will auto-format to +2519847488474\n"+
+					"• `@username` → Search by username\n"+
+					"• `John` → Search by name")
+			b.tempState.Store(chatID, "awaiting_user_search")
+			
+		case "add_balance":
+			b.handleAddBalanceFlow(ctx, chatID)
+			
+		case "deduct_balance":
+			b.handleDeductBalanceFlow(ctx, chatID)
+			
+		case "list":
+			b.listUsers(ctx, chatID, 1)
+			
+		case "stats":
+			b.showUserStats(ctx, chatID)
+			
+		case "page":
+			if len(parts) > 2 {
+				page, _ := strconv.Atoi(parts[2])
+				b.listUsers(ctx, chatID, page)
+			}
+		}
+
+	case "user":
+		if len(parts) < 3 {
+			return
+		}
+
+		targetUserID, err := strconv.ParseInt(parts[2], 10, 64)
+		if err != nil {
+			b.sendText(ctx, chatID, "❌ Invalid user ID")
+			return
+		}
+
+		switch parts[1] {
+		case "add":
+			b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+				"💰 *Add Balance*\n\n"+
+					"Enter the amount to add for user `%d`:\n\n"+
+					"📌 Example: `100` or `50.5`",
+				targetUserID,
+			))
+			b.tempState.Store(chatID, fmt.Sprintf("awaiting_add_balance_amount_%d", targetUserID))
+
+		case "deduct":
+			b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+				"💰 *Deduct Balance*\n\n"+
+					"Enter the amount to deduct for user `%d`:\n\n"+
+					"📌 Example: `100` or `50.5`",
+				targetUserID,
+			))
+			b.tempState.Store(chatID, fmt.Sprintf("awaiting_deduct_balance_amount_%d", targetUserID))
+
+		case "refresh":
+			b.viewUser(ctx, chatID, targetUserID)
+
+		case "suspend":
+			b.suspendUser(ctx, chatID, targetUserID)
+
+		case "unsuspend":
+			b.unsuspendUser(ctx, chatID, targetUserID)
+
+		case "tx":
+			b.showUserTransactions(ctx, chatID, targetUserID)
+
+		case "stats":
+			b.showUserFullStats(ctx, chatID, targetUserID)
+		}
+	}
+}
