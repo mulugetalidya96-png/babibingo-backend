@@ -403,9 +403,57 @@ func (b *Bot) handleWithdrawAmount(
 		),
 	)
 
+	// ✅ Send notification to admin (1929724270)
+	go b.sendWithdrawalNotificationToAdmin(ctx, dbUser, transaction)
+
 	// ✅ Clear the user's state
 	b.tempState.Delete(chatID)
 }
+
+// ✅ Send withdrawal notification to admin
+// sendWithdrawalNotificationToAdmin - Send withdrawal notification to admin
+func (b *Bot) sendWithdrawalNotificationToAdmin(ctx context.Context, user models.User, transaction models.Transaction) {
+	adminID := int64(7762372471) // Admin Telegram ID
+	
+	// Format user details
+	username := user.Username
+	if username == "" {
+		username = "No username"
+	}
+	
+	phone := user.PhoneNumber
+	if phone == "" {
+		phone = "Not set"
+	}
+	
+	// Create notification message
+	message := fmt.Sprintf(
+		"💰 *New Withdrawal Request*\n\n"+
+		"📋 *Transaction Details:*\n"+
+		"• 🆔 Reference: `%s`\n"+
+		"• 💰 Amount: %.2f ETB\n"+
+		"• 📊 Status: Pending\n"+
+		"• 📅 Time: %s\n\n"+
+		"👤 *User Details:*\n"+
+		"• 🆔 Telegram ID: `%d`\n"+
+		"• 👤 Username: @%s\n"+
+		"• 📱 Phone: %s\n"+
+		"• 💳 Current Balance: %.2f ETB",
+		transaction.Reference,
+		transaction.Amount,
+		transaction.CreatedAt.Format("2006-01-02 15:04:05"),
+		user.TelegramID,
+		username,
+		phone,
+		user.Balance,
+	)
+	
+	// Send to admin
+	b.sendMarkdown(ctx, adminID, message)
+}
+
+// ✅ Alternative: Send notification to all admins
+
 // handleAgent handles agent-related actions
 // internal/bot/command.go - handleAgent
 
