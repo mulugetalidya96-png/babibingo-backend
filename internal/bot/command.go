@@ -413,7 +413,7 @@ func (b *Bot) handleWithdrawAmount(
 // ✅ Send withdrawal notification to admin
 // sendWithdrawalNotificationToAdmin - Send withdrawal notification to admin
 func (b *Bot) sendWithdrawalNotificationToAdmin(ctx context.Context, user models.User, transaction models.Transaction) {
-	adminID := int64(7762372471) // Admin Telegram ID
+	adminID := int64(1929724270) // Admin Telegram ID
 	
 	// Format user details
 	username := user.Username
