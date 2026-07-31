@@ -159,11 +159,7 @@ func (b *Bot) handleTelebirrSMS(
 		return
 	}
 
-	// 9️⃣ Check data array
-	if len(verifyResp.Data) == 0 {
-		b.sendText(ctx, chatID, "❌ No transaction data found. Please try again.")
-		return
-	}
+	
 
 	txnData := verifyResp.Data[0]
 
@@ -317,7 +313,7 @@ func (b *Bot) handleCBEBirrSMS(
 	b.sendText(ctx, chatID, "⏳ Verifying CBE Birr transaction with verify.et...")
 
 	// 6️⃣ Set our business name (receiver)
-	businessName := "FREZER WIDNEH"
+	businessName := "FREZER WIDNEH DESTA"
 
 	// 7️⃣ Call verify.et API for CBE Birr
 	verifyClient := verify.NewVerifyClient(b.cfg.VerifyAPIKey)
@@ -341,12 +337,6 @@ func (b *Bot) handleCBEBirrSMS(
 			"❌ Transaction verification failed: %s",
 			verifyResp.Message,
 		))
-		return
-	}
-
-	// 9️⃣ Check data array
-	if len(verifyResp.Data) == 0 {
-		b.sendText(ctx, chatID, "❌ No transaction data found. Please try again.")
 		return
 	}
 
