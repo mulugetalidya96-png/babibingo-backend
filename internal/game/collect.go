@@ -1,6 +1,7 @@
 package game
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -15,11 +16,26 @@ import (
 // OPTIMIZED: Batch operations, reduced queries, and parallel processing
 // NOW ALLOWS: Game to start even with only bots (for testing/demo)
 func (e *Engine) collectAllStakes(state *GameState) error {
+	// ✅ Add context with timeout to prevent hanging transactions
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// ✅ Lock the state to prevent race conditions
+	state.mu.RLock()
+	
 	// Get all unique Telegram IDs with reservations
 	telegramIDs := make(map[int64]bool)
 	for _, telegramID := range state.ReservedCards {
 		telegramIDs[telegramID] = true
 	}
+
+	// ✅ Copy user cards for processing
+	userCardsCopy := make(map[int64][]int)
+	for k, v := range state.UserCards {
+		userCardsCopy[k] = v
+	}
+	
+	state.mu.RUnlock()
 
 	if len(telegramIDs) == 0 {
 		log.Println("⚠️ No players with reservations, cancelling game...")
@@ -29,8 +45,8 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	log.Printf("🟡 Collecting stakes from %d players (including bots)", len(telegramIDs))
 	
 	// ✅ DEBUG: Log all reserved cards
-	log.Printf("🔍 Reserved cards: %v", state.ReservedCards)
-	log.Printf("🔍 User cards: %v", state.UserCards)
+	log.Printf("🔍 Reserved cards count: %d", len(state.ReservedCards))
+	log.Printf("🔍 User cards count: %d players", len(state.UserCards))
 
 	// ✅ OPTIMIZATION 1: Batch fetch all users in one query
 	var telegramIDList []int64
@@ -39,7 +55,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	}
 
 	var users []models.User
-	if err := e.db.Where("telegram_id IN ?", telegramIDList).Find(&users).Error; err != nil {
+	if err := e.db.WithContext(ctx).Where("telegram_id IN ?", telegramIDList).Find(&users).Error; err != nil {
 		return fmt.Errorf("failed to fetch users: %w", err)
 	}
 
@@ -50,7 +66,12 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 		log.Printf("  📌 User %d: IsBot=%v, Balance=%.2f", users[i].TelegramID, users[i].IsBot, users[i].Balance)
 	}
 
-	tx := e.db.Begin()
+	// ✅ Start transaction with timeout
+	tx := e.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to begin transaction: %w", tx.Error)
+	}
+	
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
@@ -82,7 +103,13 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			continue
 		}
 
-		cardCount := len(state.UserCards[telegramID])
+		// ✅ Use the copied user cards
+		cardCount := len(userCardsCopy[telegramID])
+		if cardCount == 0 {
+			log.Printf("⚠️ User %d has no cards, skipping", telegramID)
+			continue
+		}
+		
 		totalStake := float64(cardCount) * StakeAmount
 
 		log.Printf("  📊 User %d: cards=%d, stake=%.2f, IsBot=%v", 
@@ -119,7 +146,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			totalPool += bp.TotalStake
 
 			// Prepare bot transactions
-			for _, cardNumber := range state.UserCards[bp.TelegramID] {
+			for _, cardNumber := range userCardsCopy[bp.TelegramID] {
 				reference := fmt.Sprintf("bot_stake_%s_%d_%d",
 					state.Game.ID.String()[:8],
 					bp.User.ID,
@@ -161,11 +188,9 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 		// ✅ Batch upsert bot game players
 		if len(botGamePlayers) > 0 {
 			for _, gp := range botGamePlayers {
-				// Use ON CONFLICT for PostgreSQL or check existence
 				var existing models.GamePlayer
 				err := tx.Where("game_id = ? AND user_id = ?", gp.GameID, gp.UserID).First(&existing).Error
 				if err == nil {
-					// Update existing
 					existing.CardsCount = gp.CardsCount
 					existing.TotalStake = gp.TotalStake
 					existing.IsBot = true
@@ -175,7 +200,6 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 						return fmt.Errorf("failed to update bot game player: %w", err)
 					}
 				} else if errors.Is(err, gorm.ErrRecordNotFound) {
-					// Create new
 					if err := tx.Create(&gp).Error; err != nil {
 						tx.Rollback()
 						return fmt.Errorf("failed to create bot game player: %w", err)
@@ -230,7 +254,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			userUpdates = append(userUpdates, *rp.User)
 
 			// Prepare transactions
-			for _, cardNumber := range state.UserCards[rp.TelegramID] {
+			for _, cardNumber := range userCardsCopy[rp.TelegramID] {
 				reference := fmt.Sprintf("stake_%s_%d_%d",
 					state.Game.ID.String()[:8],
 					rp.User.ID,
@@ -369,13 +393,15 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	log.Printf("💰 Total pool including bots: %.2f ETB", totalPool)
 
 	// ✅ ALLOW GAME TO START EVEN WITH NO REAL PLAYERS
-	// This is useful for testing/demo purposes
 	if realPlayerCount == 0 && botPlayerCount > 0 {
 		log.Printf("🎮 No real players, but %d bots are playing. Starting bot-only game for testing/demo!", botPlayerCount)
 		log.Printf("💰 Total pool: %.2f ETB (all bots)", totalPool)
 		
-		// Still update the game with the pool
+		// Update the game with the pool
+		state.mu.Lock()
 		state.Game.TotalPool = totalPool
+		state.mu.Unlock()
+		
 		if err := tx.Save(state.Game).Error; err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to update game pool: %w", err)
@@ -395,11 +421,10 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			Message:   fmt.Sprintf("💰 Total pool: %.2f ETB (bots only)", totalPool),
 		})
 		
-		// ✅ Return nil to allow game to start
 		return nil
 	}
 
-	// ✅ No players at all (should not happen)
+	// ✅ No players at all
 	if realPlayerCount == 0 && botPlayerCount == 0 {
 		log.Println("⚠️ No players found, cancelling game...")
 		tx.Rollback()
@@ -410,7 +435,10 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	log.Printf("✅ Found %d real players and %d bots, game will start!", realPlayerCount, botPlayerCount)
 
 	// Update the game's total pool
+	state.mu.Lock()
 	state.Game.TotalPool = totalPool
+	state.mu.Unlock()
+	
 	if err := tx.Save(state.Game).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to update game pool: %w", err)
@@ -422,18 +450,20 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 
 	log.Printf("✅ Collected total pool: %.2f (including bots)", totalPool)
 
-	// ✅ Send balance updates to agents
+	// ✅ Send balance updates to agents (non-blocking)
 	for agentTelegramID, commissionAmount := range commissionEarned {
 		if commissionAmount > 0 {
-			var agent models.User
-			if err := e.db.Where("telegram_id = ? AND is_bot = ?", agentTelegramID, false).First(&agent).Error; err == nil {
-				e.broadcast(GameEvent{
-					Type:    "balance.update",
-					UserID:  agentTelegramID,
-					Balance: agent.Balance,
-				})
-				log.Printf("💰 Sent balance update to agent %d: %.2f ETB", agentTelegramID, agent.Balance)
-			}
+			go func(telegramID int64) {
+				var agent models.User
+				if err := e.db.Where("telegram_id = ? AND is_bot = ?", telegramID, false).First(&agent).Error; err == nil {
+					e.broadcast(GameEvent{
+						Type:    "balance.update",
+						UserID:  telegramID,
+						Balance: agent.Balance,
+					})
+					log.Printf("💰 Sent balance update to agent %d: %.2f ETB", telegramID, agent.Balance)
+				}
+			}(agentTelegramID)
 		}
 	}
 
