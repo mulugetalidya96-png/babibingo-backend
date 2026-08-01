@@ -80,11 +80,16 @@ func (e *Engine) handleWaitingState(state *GameState) {
 		
 		if len(state.ReservedCards) == 0 {
 			log.Println("⚠️ No cards reserved, cancelling game...")
+			// ✅ Unlock before calling endGame
+			state.mu.Unlock()
 			e.endGame(state, nil)
 			return
 		}
 		
 		log.Println("🚀 STARTING GAME - calling startCalling()...")
+		
+		// ✅ CRITICAL: Unlock before calling startCalling to prevent deadlock
+		state.mu.Unlock()
 		e.startCalling(state)
 		log.Println("✅ startCalling() completed")
 		return
@@ -127,11 +132,15 @@ func (e *Engine) handleCallingState(state *GameState) {
 		
 		if state.CallIndex >= MaxCalls {
 			log.Println("🏁 Max calls reached, ending game...")
+			// ✅ Unlock before calling endGame
+			state.mu.Unlock()
 			e.endGame(state, nil)
 			return
 		}
 		
 		log.Println("📞 Calling next number...")
+		// ✅ Unlock before calling callNextNumber
+		state.mu.Unlock()
 		e.callNextNumber(state)
 		log.Println("✅ callNextNumber() completed")
 	}
