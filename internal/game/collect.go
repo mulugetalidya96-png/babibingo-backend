@@ -13,6 +13,7 @@ import (
 // OPTIMIZED: Batch operations, reduced queries, and parallel processing
 // BOTS: No balance deduction, but their stakes contribute to the pool
 // HOUSE CUT: Applied to the total pool
+// INSUFFICIENT BALANCE: Players with insufficient balance are removed from the game
 func (e *Engine) collectAllStakes(state *GameState) error {
 	log.Println("💰💰💰 COLLECT ALL STAKES STARTED 💰💰💰")
 	
@@ -22,8 +23,10 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	// Lock state and copy data
 	state.mu.RLock()
 	telegramIDs := make(map[int64]bool)
-	for _, telegramID := range state.ReservedCards {
+	// ✅ ReservedCards is map[int]int64, need to iterate correctly
+	for cardIndex, telegramID := range state.ReservedCards {
 		telegramIDs[telegramID] = true
+		_ = cardIndex // Mark as used
 	}
 	userCardsCopy := make(map[int64][]int)
 	for k, v := range state.UserCards {
@@ -80,13 +83,21 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	var botPool float64
 	totalPool := 0.0
 	commissionEarned := make(map[int64]float64)
+	
+	// ✅ Track removed players
+	var removedPlayers []int64
+	var removedCardCount int
 
-	// Process players
+	// Process players - check balances first
 	for telegramID := range telegramIDs {
 		user, exists := userMap[telegramID]
 		if !exists {
+			log.Printf("⚠️ User %d not found in database, skipping", telegramID)
+			removedPlayers = append(removedPlayers, telegramID)
+			removedCardCount += len(userCardsCopy[telegramID])
 			continue
 		}
+		
 		cardCount := len(userCardsCopy[telegramID])
 		if cardCount == 0 {
 			continue
@@ -105,12 +116,66 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 			botPlayers = append(botPlayers, playerData)
 			botPool += totalStake
 		} else {
+			// ✅ Check balance for real players
+			if user.Balance < totalStake {
+				log.Printf("⚠️ User %d has insufficient balance (needs %.2f, has %.2f), removing from game", 
+					telegramID, totalStake, user.Balance)
+				removedPlayers = append(removedPlayers, telegramID)
+				removedCardCount += cardCount
+				continue
+			}
 			realPlayers = append(realPlayers, playerData)
 			realPool += totalStake
 		}
 	}
 
-	log.Printf("📊 Found %d real players and %d bot players", len(realPlayers), len(botPlayers))
+	// ✅ Remove players with insufficient balance from reserved cards
+	if len(removedPlayers) > 0 {
+		log.Printf("🗑️ Removing %d players with insufficient balance (%d cards total)", 
+			len(removedPlayers), removedCardCount)
+		
+		state.mu.Lock()
+		// ✅ Create new ReservedCards map without removed players
+		newReservedCards := make(map[int]int64)
+		for cardIndex, telegramID := range state.ReservedCards {
+			removed := false
+			for _, removedID := range removedPlayers {
+				if telegramID == removedID {
+					removed = true
+					break
+				}
+			}
+			if !removed {
+				newReservedCards[cardIndex] = telegramID
+			}
+		}
+		state.ReservedCards = newReservedCards
+		
+		// Remove from UserCards
+		for _, telegramID := range removedPlayers {
+			delete(state.UserCards, telegramID)
+		}
+		state.mu.Unlock()
+		
+		// ✅ Broadcast removal to players
+		for _, telegramID := range removedPlayers {
+			e.broadcast(GameEvent{
+				Type:      "player.removed",
+				GameID:    state.Game.ID.String(),
+				UserID:    telegramID,
+				Message:   fmt.Sprintf("⚠️ Removed from game due to insufficient balance"),
+			})
+		}
+	}
+
+	// Check if we have any real players left
+	if len(realPlayers) == 0 && len(botPlayers) == 0 {
+		tx.Rollback()
+		return fmt.Errorf("no valid players remaining after removing insufficient balances")
+	}
+
+	log.Printf("📊 Found %d real players and %d bot players (removed %d players)", 
+		len(realPlayers), len(botPlayers), len(removedPlayers))
 
 	// ✅ Process bots - NO BALANCE DEDUCTION, but they contribute to the pool
 	if len(botPlayers) > 0 {
@@ -123,12 +188,11 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 
 		for _, bp := range botPlayers {
 			totalPool += bp.TotalStake
-			// ✅ Convert int64 to uint
 			botUserIDs = append(botUserIDs, uint(bp.User.ID))
 
 			// Prepare bot transactions (amount is 0 since no balance deduction)
 			for _, cardNumber := range userCardsCopy[bp.TelegramID] {
-				_ = cardNumber // ✅ Mark as used to avoid unused warning
+				_ = cardNumber
 				reference := fmt.Sprintf("bot_stake_%s_%d_%d",
 					state.Game.ID.String()[:8],
 					bp.User.ID,
@@ -137,7 +201,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 				botTransactions = append(botTransactions, models.Transaction{
 					UserID:      bp.User.ID,
 					Type:        "stake",
-					Amount:      0, // Bots don't pay
+					Amount:      0,
 					Status:      "completed",
 					Method:      "system",
 					Reference:   reference,
@@ -194,20 +258,6 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	if len(realPlayers) > 0 {
 		log.Printf("👤 Processing %d real players (deducting balance)...", len(realPlayers))
 
-		// Check balances
-		var insufficientBalance []string
-		for _, rp := range realPlayers {
-			if rp.User.Balance < rp.TotalStake {
-				insufficientBalance = append(insufficientBalance, 
-					fmt.Sprintf("User %d needs %.2f, has %.2f", 
-						rp.TelegramID, rp.TotalStake, rp.User.Balance))
-			}
-		}
-		if len(insufficientBalance) > 0 {
-			tx.Rollback()
-			return fmt.Errorf("insufficient balances: %v", insufficientBalance)
-		}
-
 		var userUpdates []models.User
 		var transactions []models.Transaction
 		var gamePlayers []models.GamePlayer
@@ -216,7 +266,6 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 
 		for _, rp := range realPlayers {
 			totalPool += rp.TotalStake
-			// ✅ Convert int64 to uint
 			realUserIDs = append(realUserIDs, uint(rp.User.ID))
 
 			// Deduct balance from real players only
@@ -225,7 +274,7 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 
 			// Prepare transactions
 			for _, cardNumber := range userCardsCopy[rp.TelegramID] {
-				_ = cardNumber // ✅ Mark as used to avoid unused warning
+				_ = cardNumber
 				reference := fmt.Sprintf("stake_%s_%d_%d",
 					state.Game.ID.String()[:8],
 					rp.User.ID,
@@ -338,14 +387,20 @@ func (e *Engine) collectAllStakes(state *GameState) error {
 	grossPool := totalPool
 	netPool, houseCut := GetPoolBreakdown(grossPool)
 
-	log.Printf("📊 Game has %d real players and %d bot players", len(realPlayers), len(botPlayers))
-	log.Printf("💰 Gross Pool: %.2f ETB (Real: %.2f, Bots: %.2f)", grossPool, realPool, botPool)
+	// ✅ Calculate total players (real + bots)
+	totalPlayers := len(realPlayers) + len(botPlayers)
+
+	log.Printf("📊 Game has %d real players and %d bot players (removed %d)", 
+		len(realPlayers), len(botPlayers), len(removedPlayers))
+	log.Printf("💰 Gross Pool: %.2f ETB (Real: %.2f, Bots: %.2f,TotalP: %2.d)", grossPool, realPool, botPool, totalPlayers)
 	log.Printf("🏠 House Cut: %.2f ETB (%.0f%%)", houseCut, HouseCutPercent*100)
 	log.Printf("🎯 Net Pool (for winners): %.2f ETB", netPool)
 
 	// Update game with gross pool
 	state.mu.Lock()
 	state.Game.TotalPool = grossPool
+	// ✅ Remove PlayerCount if it doesn't exist in the model
+	// state.Game.PlayerCount = totalPlayers // Commented out
 	state.mu.Unlock()
 
 	if err := tx.Save(state.Game).Error; err != nil {

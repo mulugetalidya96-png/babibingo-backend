@@ -137,6 +137,7 @@ func (e *Engine) handleCallingState(state *GameState) {
 // To:
 log.Printf("🔊 CALLING: Timer=%d, Called=%d/75, CallIndex=%d, Players=%d, Pool=%.2f, GameID=%s", 
     timerSeconds, calledCount, callIndex, userCards, totalPool, gameID.String())
+	
 	if timerSeconds <= 0 {
 		log.Printf("⏰ Calling timer reached 0! CallIndex=%d, MaxCalls=%d", callIndex, MaxCalls)
 		

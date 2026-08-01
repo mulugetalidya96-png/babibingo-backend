@@ -38,9 +38,20 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 		return fmt.Errorf("user not found: %w", err)
 	}
 
-	// CHECK BALANCE FIRST - before any reservation
-	if user.Balance < StakeAmount {
-		err := fmt.Errorf("insufficient balance: need %.2f ETB, have %.2f ETB", StakeAmount, user.Balance)
+	// ✅ CHECK BALANCE FIRST - before any reservation
+	// Calculate total stake needed (current cards + 1 new card)
+	currentCards := len(state.UserCards[telegramID])
+	if currentCards >= MaxCardsPerPlayer {
+		err := fmt.Errorf("maximum %d cards allowed per player", MaxCardsPerPlayer)
+		e.sendError(telegramID, err.Error())
+		return err
+	}
+
+	totalStakeNeeded := float64(currentCards+1) * StakeAmount
+	
+	if user.Balance < totalStakeNeeded {
+		err := fmt.Errorf("insufficient balance: need %.2f ETB for %d cards, have %.2f ETB", 
+			totalStakeNeeded, currentCards+1, user.Balance)
 		e.sendError(telegramID, err.Error())
 		return err
 	}
@@ -53,12 +64,6 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 			return err
 		}
 		err := fmt.Errorf("card already reserved by another player")
-		e.sendError(telegramID, err.Error())
-		return err
-	}
-
-	if len(state.UserCards[telegramID]) >= MaxCardsPerPlayer {
-		err := fmt.Errorf("maximum %d cards allowed per player", MaxCardsPerPlayer)
 		e.sendError(telegramID, err.Error())
 		return err
 	}
@@ -113,10 +118,10 @@ func (e *Engine) ReserveCard(telegramID int64, cardNumber int) error {
 		GrossPool:  grossPool,
 		HouseCut:   houseCut,
 		Stake:      StakeAmount,
-		Message:    fmt.Sprintf("Card #%d reserved! Prize Pool: $%.2f", cardNumber, netPool),
+		Message:    fmt.Sprintf("Card #%d reserved! Prize Pool: %.2f ETB", cardNumber, netPool),
 	})
 
-	// ✅ Send balance update to the user (balance hasn't changed, but confirms it)
+	// ✅ Send balance update to the user (balance hasn't changed yet, but confirms available balance)
 	e.sendBalanceUpdate(telegramID, user.Balance)
 
 	log.Printf("🟢 Card %d reserved for user %d", cardNumber, telegramID)
@@ -189,7 +194,7 @@ func (e *Engine) CancelReservation(telegramID int64, cardNumber int) error {
 		Pool:       netPool,
 		GrossPool:  grossPool,
 		HouseCut:   houseCut,
-		Message:    fmt.Sprintf("Card #%d cancelled. Prize Pool: $%.2f", cardNumber, netPool),
+		Message:    fmt.Sprintf("Card #%d cancelled. Prize Pool: %.2f ETB", cardNumber, netPool),
 	})
 
 	// ✅ Send balance update to the user
