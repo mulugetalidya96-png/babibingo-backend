@@ -12,6 +12,7 @@ import (
 
 // Run starts the game engine ticker
 func (e *Engine) Run() {
+	log.Println("🔄 GAME ENGINE RUN STARTED!")
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -32,11 +33,23 @@ func (e *Engine) tick() {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
+	// ✅ Log every tick with game status
+	log.Printf("🔄 TICK: Status=%s, Timer=%d, Called=%d/75, Players=%d, Reserved=%d", 
+		state.Game.Status, 
+		int(state.Timer.Seconds()), 
+		len(state.CalledNums), 
+		len(state.UserCards),
+		len(state.ReservedCards))
+
 	switch state.Game.Status {
 	case GameStatusWaiting:
 		e.handleWaitingState(state)
 	case GameStatusCalling:
 		e.handleCallingState(state)
+	case GameStatusFinished:
+		log.Println("📌 Game is finished, waiting for cleanup...")
+	default:
+		log.Printf("⚠️ Unknown game status: %s", state.Game.Status)
 	}
 }
 
@@ -47,14 +60,33 @@ func (e *Engine) handleWaitingState(state *GameState) {
 		state.Timer = 0
 	}
 
+	// ✅ Log timer countdown every 5 seconds
+	if int(state.Timer.Seconds())%5 == 0 {
+		log.Printf("⏱️ WAITING: Timer=%d, Players=%d, Reserved=%d, Pool=%.2f", 
+			int(state.Timer.Seconds()), 
+			len(state.UserCards), 
+			len(state.ReservedCards),
+			state.Game.TotalPool)
+	}
+
+	// ✅ Log when timer is close to 0
+	if int(state.Timer.Seconds()) <= 3 && int(state.Timer.Seconds()) > 0 {
+		log.Printf("⏰ Timer at %d seconds! Reserved cards: %d", 
+			int(state.Timer.Seconds()), len(state.ReservedCards))
+	}
+
 	if state.Timer <= 0 {
+		log.Printf("🚀🚀🚀 TIMER REACHED 0! Reserved cards: %d", len(state.ReservedCards))
+		
 		if len(state.ReservedCards) == 0 {
 			log.Println("⚠️ No cards reserved, cancelling game...")
 			e.endGame(state, nil)
 			return
 		}
-		log.Println("🚀 Timer reached 0! Starting game...")
+		
+		log.Println("🚀 STARTING GAME - calling startCalling()...")
 		e.startCalling(state)
+		log.Println("✅ startCalling() completed")
 		return
 	}
 
@@ -82,18 +114,40 @@ func (e *Engine) handleCallingState(state *GameState) {
 		state.Timer = 0
 	}
 
+	// ✅ Log calling state every tick
+	log.Printf("🔊 CALLING: Timer=%d, Called=%d/75, CallIndex=%d, Players=%d, Pool=%.2f", 
+		int(state.Timer.Seconds()), 
+		len(state.CalledNums), 
+		state.CallIndex,
+		len(state.UserCards),
+		state.Game.TotalPool)
+
 	if state.Timer <= 0 {
+		log.Printf("⏰ Calling timer reached 0! CallIndex=%d, MaxCalls=%d", state.CallIndex, MaxCalls)
+		
 		if state.CallIndex >= MaxCalls {
 			log.Println("🏁 Max calls reached, ending game...")
 			e.endGame(state, nil)
 			return
 		}
+		
+		log.Println("📞 Calling next number...")
 		e.callNextNumber(state)
+		log.Println("✅ callNextNumber() completed")
 	}
 }
 
 // startNewGame creates a new game
 func (e *Engine) startNewGame() {
+	log.Println("🆕 Creating new game...")
+	
+	// Stop any existing bot routine before creating new game
+	if e.botManager != nil {
+		log.Println("🛑 Stopping existing bot routine...")
+		e.botManager.StopBotRoutine()
+		e.botManager.ResetGameBots()
+	}
+
 	game := &models.Game{
 		Status:            GameStatusWaiting,
 		StakeAmount:       StakeAmount,
@@ -107,9 +161,7 @@ func (e *Engine) startNewGame() {
 		log.Printf("🔴 Failed to create game: %v", err)
 		return
 	}
-	if e.botManager != nil {
-	e.botManager.ResetGameBots()
-}
+	log.Printf("✅ Game created in database: %s", game.ID.String())
 
 	e.currentGame = &GameState{
 		Game:          game,
@@ -119,19 +171,19 @@ func (e *Engine) startNewGame() {
 		ReservedCards: make(map[int]int64),
 		UserCards:     make(map[int64][]int),
 	}
+	log.Printf("✅ Game state initialized with timer: %v", LobbyDuration)
 
-	// ✅ Start bots in background - don't block the timer
+	// Start bots in background
 	if e.botManager != nil {
+		log.Println("🤖 Starting bot manager...")
 		go func() {
-			// Wait a bit for game to initialize
-			time.Sleep(1 * time.Second)
-			// Add initial bots (5-10 bots randomly)
+			time.Sleep(2 * time.Second)
 			initialBots := rand.Intn(6) + 5 // 5-10 bots
+			log.Printf("🤖 Adding %d initial bots...", initialBots)
 			e.botManager.ReserveCardsForBots(initialBots)
 		}()
-		
-		// Start the bot routine in background
 		go e.botManager.StartBotRoutine()
+		log.Println("✅ Bot manager started")
 	}
 
 	grossPool := 0.0
@@ -150,19 +202,24 @@ func (e *Engine) startNewGame() {
 		Stake:      StakeAmount,
 	})
 
-	log.Printf("🟢 New game started: %s", game.ID.String())
+	log.Printf("🟢 New game started: %s (Timer: %v)", game.ID.String(), LobbyDuration)
 }
+
 // endGame ends the current game
 func (e *Engine) endGame(state *GameState, winner *WinnerInfo) {
-	log.Printf("🏁 Ending game - Winner: %v", winner != nil)
-    if e.botManager != nil {
+	log.Printf("🏁 Ending game - Winner: %v, GameID: %s", winner != nil, state.Game.ID.String())
+	
+	if e.botManager != nil {
+		log.Println("🛑 Stopping bot routine...")
 		e.botManager.StopBotRoutine()
 	}
+	
 	state.Game.Status = GameStatusFinished
 	now := time.Now()
 	state.Game.EndedAt = &now
 
 	if winner != nil {
+		log.Printf("💰 Winner: UserID=%d, Prize=%.2f", winner.UserID, winner.Prize)
 		state.Game.WinnerUserID = &winner.UserID
 		state.Game.WinnerPrize = winner.Prize
 
@@ -179,10 +236,16 @@ func (e *Engine) endGame(state *GameState, winner *WinnerInfo) {
 			Method: "system",
 		})
 
-		log.Printf("💰 Winner %d won $%.2f", winner.UserID, winner.Prize)
+		log.Printf("💰 Winner %d won %.2f ETB", winner.UserID, winner.Prize)
+	} else {
+		log.Println("📌 No winner - game ended without a winner")
 	}
 
-	e.db.Save(state.Game)
+	if err := e.db.Save(state.Game).Error; err != nil {
+		log.Printf("⚠️ Failed to save game: %v", err)
+	} else {
+		log.Printf("✅ Game saved to database")
+	}
 
 	grossPool := state.Game.TotalPool
 	netPool, houseCut := GetPoolBreakdown(grossPool)
@@ -199,8 +262,9 @@ func (e *Engine) endGame(state *GameState, winner *WinnerInfo) {
 
 	// Reset after delay
 	go func() {
+		log.Println("⏳ Waiting 10 seconds before reset...")
 		time.Sleep(10 * time.Second)
 		e.currentGame = nil
-		log.Println("🔄 Game reset complete")
+		log.Println("🔄 Game reset complete - ready for new game")
 	}()
 }
