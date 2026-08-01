@@ -49,8 +49,76 @@ func (b *Bot) handleBots(ctx context.Context, chatID int64, args []string) {
 	case "status":
 		b.showBotStatus(ctx, chatID)
 		
+	case "disable":
+		// ✅ Disable all bots
+		if b.engine == nil {
+			b.sendText(ctx, chatID, "❌ Game engine not available.")
+			return
+		}
+		
+		botManager := b.engine.GetBotManager()
+		if botManager == nil {
+			b.sendText(ctx, chatID, "❌ Bot manager not available.")
+			return
+		}
+		
+		// Confirm before disabling
+		keyboard := [][]telego.InlineKeyboardButton{
+			{
+				{Text: "✅ Yes, Disable All Bots", CallbackData: "bots_disable_confirm"},
+				{Text: "❌ Cancel", CallbackData: "bots_back"},
+			},
+		}
+		
+		b.sendMarkdownKeyboard(ctx, chatID, 
+			"⚠️ *Disable All Bots*\n\n"+
+			"This will:\n"+
+			"• Set bot count to 0\n"+
+			"• Stop the bot routine\n"+
+			"• Clear all bots from memory\n\n"+
+			"Are you sure you want to continue?", 
+			keyboard)
+		
+	case "enable":
+		// ✅ Enable bots with a count
+		if b.engine == nil {
+			b.sendText(ctx, chatID, "❌ Game engine not available.")
+			return
+		}
+		
+		botManager := b.engine.GetBotManager()
+		if botManager == nil {
+			b.sendText(ctx, chatID, "❌ Bot manager not available.")
+			return
+		}
+		
+		// Parse count
+		count := 20
+		if len(args) > 1 {
+			if c, err := strconv.Atoi(args[1]); err == nil && c > 0 && c <= 200 {
+				count = c
+			} else {
+				b.sendText(ctx, chatID, "❌ Invalid count. Please use a number between 1-200.\n\nExample: `/bots enable 30`")
+				return
+			}
+		}
+		
+		// Enable bots
+		botManager.EnableBots(count)
+		
+		b.sendMarkdown(ctx, chatID, fmt.Sprintf(
+			"🚀 *Bots Enabled*\n\n"+
+			"Bots have been enabled with count: %d\n\n"+
+			"• Desired count: %d\n"+
+			"• Bot routine started\n"+
+			"• Bots will join next game", count, count))
+		
 	default:
-		b.sendText(ctx, chatID, "❌ Unknown command.\n\nAvailable:\n/bots status - Show bot status\n/bots set - Set bot count (1-200)")
+		b.sendText(ctx, chatID, "❌ Unknown command.\n\nAvailable:\n"+
+			"/bots status - Show bot status\n"+
+			"/bots set - Set bot count (1-200)\n"+
+			"/bots disable - Disable all bots\n"+
+			"/bots enable <count> - Enable bots with count")
 	}
 }
 

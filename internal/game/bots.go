@@ -72,7 +72,7 @@ func (bm *BotManager) loadDesiredCount() {
 	}
 }
 
-// saveDesiredCount - Save to databas
+// saveDesiredCount - Save to database
 func (bm *BotManager) saveDesiredCount() {
 	count := int(atomic.LoadInt32(&bm.desiredCount))
 
@@ -113,6 +113,7 @@ func (bm *BotManager) GetDesiredCount() int {
 	}
 	return int(atomic.LoadInt32(&bm.desiredCount))
 }
+
 // ActiveBotReservations returns the number of bot cards
 // reserved in the current game.
 func (bm *BotManager) ActiveBotReservations() int {
@@ -142,9 +143,9 @@ func (bm *BotManager) getOrCreateBotUsers(count int) ([]*models.User, error) {
 	// First, try to find existing bots that are not currently in a game
 	var existingBots []models.User
 	err := bm.engine.db.
-    Where("is_bot = ?", true).
-    Limit(count).
-    Find(&existingBots).Error
+		Where("is_bot = ?", true).
+		Limit(count).
+		Find(&existingBots).Error
 
 	if err != nil {
 		return nil, err
@@ -205,8 +206,11 @@ func (bm *BotManager) getOrCreateBotUsers(count int) ([]*models.User, error) {
 }
 
 // ReserveCardsForBots - Updated to respect desired count
-// ReserveCardsForBots - Step 3
 func (bm *BotManager) ReserveCardsForBots(count int) {
+	// ✅ If count is 0, don't reserve any bots
+	if count <= 0 {
+		return
+	}
 
 	engine := bm.engine
 
@@ -216,7 +220,6 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 	}
 
 	state := engine.currentGame
-
 
 	// Read initial state
 	state.mu.RLock()
@@ -228,94 +231,57 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 	}
 
 	availableCards := bm.getAvailableCards(state)
-
 	currentPlayers := len(state.UserCards)
-
 	state.mu.RUnlock()
-
-
 
 	if len(availableCards) == 0 {
 		log.Println("⚠️ No available cards for bots")
 		return
 	}
 
-
 	if count > len(availableCards) {
 		count = len(availableCards)
 	}
-
 
 	if currentPlayers+count > MaxPlayers {
 		count = MaxPlayers - currentPlayers
 	}
 
-
 	if count <= 0 {
 		return
 	}
 
-
-
 	botUsers, err := bm.getOrCreateBotUsers(count)
-
 	if err != nil {
-		log.Printf(
-			"⚠️ Failed creating bot users: %v",
-			err,
-		)
+		log.Printf("⚠️ Failed creating bot users: %v", err)
 		return
 	}
 
-
-
-	log.Printf(
-		"🤖 Reserving cards for %d bots...",
-		len(botUsers),
-	)
-
-
+	log.Printf("🤖 Reserving cards for %d bots...", len(botUsers))
 
 	botsReserved := 0
 
-
-
 	for i, user := range botUsers {
-
-
 		if i >= len(availableCards) {
 			break
 		}
 
-
-
 		cardIndex := rand.Intn(len(availableCards))
-
 		cardNumber := availableCards[cardIndex]
-
-
 		availableCards = append(
 			availableCards[:cardIndex],
 			availableCards[cardIndex+1:]...,
 		)
 
-
-
 		var card *models.Card
-
-
 
 		// ONLY LOCK MEMORY
 		state.mu.Lock()
 
-
 		if state.Game.Status != GameStatusWaiting {
-
 			state.mu.Unlock()
 			break
 		}
-
-
 
 		card, err = bm.reserveCardState(
 			state,
@@ -323,98 +289,44 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 			cardNumber,
 		)
 
-
 		state.mu.Unlock()
 
-
-
 		if err != nil {
-
-			log.Printf(
-				"⚠️ Failed reserving card %d: %v",
-				cardNumber,
-				err,
-			)
-
+			log.Printf("⚠️ Failed reserving card %d: %v", cardNumber, err)
 			continue
 		}
-
-
-
-		// ==============================
-		// NO STATE LOCK BELOW THIS POINT
-		// ==============================
-
-
 
 		// Save card
 		if err := bm.engine.db.Create(card).Error; err != nil {
-
-			log.Printf(
-				"⚠️ Failed saving card %d: %v",
-				cardNumber,
-				err,
-			)
-
+			log.Printf("⚠️ Failed saving card %d: %v", cardNumber, err)
 
 			// rollback memory reservation
-
 			state.mu.Lock()
-
-
-			delete(
-				state.ReservedCards,
-				cardNumber,
-			)
-
-
+			delete(state.ReservedCards, cardNumber)
 			userCards := state.UserCards[user.TelegramID]
-
-
 			for index, num := range userCards {
-
 				if num == cardNumber {
-
-					state.UserCards[user.TelegramID] =
-						append(
-							userCards[:index],
-							userCards[index+1:]...,
-						)
-
+					state.UserCards[user.TelegramID] = append(
+						userCards[:index],
+						userCards[index+1:]...,
+					)
 					break
 				}
 			}
-
-
 			state.mu.Unlock()
-
-
 			continue
 		}
 
-
-
-
 		// Update pool AFTER unlock
-
 		state.mu.Lock()
-
 		bm.engine.UpdatePool(state)
-
 		grossPool := state.Game.TotalPool
-
 		players := len(state.UserCards)
-
 		state.mu.Unlock()
-
-
 
 		netPool, houseCut := GetPoolBreakdown(grossPool)
 
-
-
 		// Broadcast AFTER unlock
-
 		bm.engine.broadcast(
 			GameEvent{
 				Type:       "card.reserved",
@@ -427,27 +339,15 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 				GrossPool:  grossPool,
 				HouseCut:   houseCut,
 				Stake:      StakeAmount,
-				Message:    fmt.Sprintf(
-					"Card #%d reserved",
-					cardNumber,
-				),
+				Message:    fmt.Sprintf("Card #%d reserved", cardNumber),
 			},
 		)
 
-
-
-
 		user.LastActive = time.Now()
-
 		bm.engine.db.Save(user)
 
-
-
-
 		// Protect only slice append
-
 		bm.mu.Lock()
-
 		bm.bots = append(
 			bm.bots,
 			&Bot{
@@ -456,22 +356,11 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 				GameID:     state.Game.ID.String(),
 			},
 		)
-
 		bm.mu.Unlock()
-
-
 
 		botsReserved++
 
-
-
-		log.Printf(
-			"🤖 Bot '%s' reserved card #%d",
-			user.FirstName,
-			cardNumber,
-		)
-
-
+		log.Printf("🤖 Bot '%s' reserved card #%d", user.FirstName, cardNumber)
 
 		time.Sleep(
 			time.Duration(
@@ -480,16 +369,10 @@ func (bm *BotManager) ReserveCardsForBots(count int) {
 		)
 	}
 
-
-
-	log.Printf(
-		"✅ %d bots successfully reserved cards",
-		botsReserved,
-	)
+	log.Printf("✅ %d bots successfully reserved cards", botsReserved)
 }
 
 // reserveCardForBot reserves a card for a bot
-
 func (bm *BotManager) reserveCardState(
 	state *GameState,
 	user *models.User,
@@ -507,17 +390,12 @@ func (bm *BotManager) reserveCardState(
 		return nil, fmt.Errorf("card not found")
 	}
 
-
 	// ONLY MEMORY CHANGES
-
 	state.ReservedCards[cardNumber] = user.TelegramID
-
-	state.UserCards[user.TelegramID] =
-		append(
-			state.UserCards[user.TelegramID],
-			cardNumber,
-		)
-
+	state.UserCards[user.TelegramID] = append(
+		state.UserCards[user.TelegramID],
+		cardNumber,
+	)
 
 	card := &models.Card{
 		ID:            uuid.New(),
@@ -530,9 +408,9 @@ func (bm *BotManager) reserveCardState(
 		Status:        "reserved",
 	}
 
-
 	return card, nil
 }
+
 // getAvailableCards returns available card numbers
 func (bm *BotManager) getAvailableCards(state *GameState) []int {
 	available := make([]int, 0, 400)
@@ -627,6 +505,12 @@ func (bm *BotManager) checkAndReserveBots() {
 	}
 
 	desiredBots := bm.GetDesiredCount()
+	
+	// ✅ If desired count is 0, don't add any bots
+	if desiredBots == 0 {
+		return
+	}
+
 	currentBots := bm.ActiveBotReservations()
 
 	if currentBots >= desiredBots {
@@ -647,6 +531,7 @@ func (bm *BotManager) checkAndReserveBots() {
 
 	bm.ReserveCardsForBots(needed)
 }
+
 // GetBotStats - Updated to include desired count
 func (bm *BotManager) GetBotStats() map[string]interface{} {
 	bm.mu.RLock()
@@ -688,6 +573,66 @@ func (bm *BotManager) DeleteAllBotUsers() error {
 	bm.bots = make([]*Bot, 0)
 	log.Printf("🤖 Deleted %d bot users from database", result.RowsAffected)
 	return nil
+}
+
+// DisableBots completely disables all bots
+func (bm *BotManager) DisableBots() {
+	log.Println("🚫 Disabling all bots...")
+	
+	// 1. Stop the bot routine
+	bm.StopBotRoutine()
+	
+	// 2. Set desired count to 0
+	bm.SetDesiredCount(0)
+	
+	// 3. Clear all bots from memory
+	bm.mu.Lock()
+	bm.bots = make([]*Bot, 0)
+	bm.mu.Unlock()
+	
+	// 4. Wait for routine to fully stop
+	time.Sleep(1 * time.Second)
+	
+	log.Println("✅ All bots disabled")
+}
+
+// EnableBots enables bots with the specified count
+func (bm *BotManager) EnableBots(count int) {
+	log.Printf("🚀 Enabling bots with count: %d", count)
+	
+	// 1. Set desired count
+	bm.SetDesiredCount(count)
+	
+	// 2. Start the bot routine
+	bm.StartBotRoutine()
+	
+	log.Printf("✅ Bots enabled with count: %d", count)
+}
+
+// ResetGameBots clears bots for the current game
+func (bm *BotManager) ResetGameBots() {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	
+	// Remove bots that are in the current game
+	currentGameID := ""
+	if bm.engine != nil && bm.engine.currentGame != nil {
+		currentGameID = bm.engine.currentGame.Game.ID.String()
+	}
+	
+	if currentGameID == "" {
+		bm.bots = make([]*Bot, 0)
+		return
+	}
+	
+	newBots := make([]*Bot, 0)
+	for _, bot := range bm.bots {
+		if bot.GameID != currentGameID {
+			newBots = append(newBots, bot)
+		}
+	}
+	bm.bots = newBots
+	log.Println("🧹 Reset bots for current game")
 }
 
 // generateRandomName generates a random Ethiopian name (200+ unique combinations)
@@ -775,10 +720,4 @@ func generateReferralCode(existingCodes map[string]bool) string {
 			return code
 		}
 	}
-}
-func (bm *BotManager) ResetGameBots() {
-	bm.mu.Lock()
-	defer bm.mu.Unlock()
-
-	bm.bots = bm.bots[:0]
 }

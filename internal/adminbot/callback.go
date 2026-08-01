@@ -236,9 +236,35 @@ func (b *Bot) handleBotsCallback(ctx context.Context, chatID int64, data string)
 		b.showBotStatus(ctx, chatID)
 	case "bots_back":
 		b.showBotStatus(ctx, chatID)
+	// ✅ NEW: Handle disable confirmation
+	case "bots_disable_confirm":
+		b.handleBotsDisableConfirm(ctx, chatID)
 	default:
 		b.sendText(ctx, chatID, "❌ Unknown bots action.")
 	}
+}
+func (b *Bot) handleBotsDisableConfirm(ctx context.Context, chatID int64) {
+	if b.engine == nil {
+		b.sendText(ctx, chatID, "❌ Game engine not available.")
+		return
+	}
+	
+	botManager := b.engine.GetBotManager()
+	if botManager == nil {
+		b.sendText(ctx, chatID, "❌ Bot manager not available.")
+		return
+	}
+	
+	// Disable bots
+	botManager.DisableBots()
+	
+	b.sendMarkdown(ctx, chatID, 
+		"🚫 *Bots Disabled*\n\n"+
+		"All bots have been disabled.\n\n"+
+		"• Desired count: 0\n"+
+		"• Bot routine stopped\n"+
+		"• All bots cleared from memory\n\n"+
+		"Use `/bots enable <count>` to re-enable.")
 }
 
 // ✅ handleBotsResetConfirm - Reset bots confirmation
