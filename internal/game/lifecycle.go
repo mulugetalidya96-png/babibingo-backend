@@ -30,18 +30,22 @@ func (e *Engine) tick() {
 	}
 
 	state := e.currentGame
-	state.mu.Lock()
-	defer state.mu.Unlock()
+	
+	// ✅ Lock the mutex for reading the state
+	state.mu.RLock()
+	status := state.Game.Status
+	timer := int(state.Timer.Seconds())
+	called := len(state.CalledNums)
+	players := len(state.UserCards)
+	reserved := len(state.ReservedCards)
+	state.mu.RUnlock()
 
 	// ✅ Log every tick with game status
 	log.Printf("🔄 TICK: Status=%s, Timer=%d, Called=%d/75, Players=%d, Reserved=%d", 
-		state.Game.Status, 
-		int(state.Timer.Seconds()), 
-		len(state.CalledNums), 
-		len(state.UserCards),
-		len(state.ReservedCards))
+		status, timer, called, players, reserved)
 
-	switch state.Game.Status {
+	// ✅ Handle each state WITHOUT holding the lock
+	switch status {
 	case GameStatusWaiting:
 		e.handleWaitingState(state)
 	case GameStatusCalling:
@@ -49,62 +53,62 @@ func (e *Engine) tick() {
 	case GameStatusFinished:
 		log.Println("📌 Game is finished, waiting for cleanup...")
 	default:
-		log.Printf("⚠️ Unknown game status: %s", state.Game.Status)
+		log.Printf("⚠️ Unknown game status: %s", status)
 	}
 }
 
 // handleWaitingState handles the waiting/lobby state
 func (e *Engine) handleWaitingState(state *GameState) {
+	// ✅ Lock just to update timer
+	state.mu.Lock()
 	state.Timer -= 1 * time.Second
 	if state.Timer < 0 {
 		state.Timer = 0
 	}
+	timerSeconds := int(state.Timer.Seconds())
+	reservedCards := len(state.ReservedCards)
+	userCards := len(state.UserCards)
+	totalPool := state.Game.TotalPool
+	gameID := state.Game.ID
+	state.mu.Unlock()
 
 	// ✅ Log timer countdown every 5 seconds
-	if int(state.Timer.Seconds())%5 == 0 {
+	if timerSeconds%5 == 0 {
 		log.Printf("⏱️ WAITING: Timer=%d, Players=%d, Reserved=%d, Pool=%.2f", 
-			int(state.Timer.Seconds()), 
-			len(state.UserCards), 
-			len(state.ReservedCards),
-			state.Game.TotalPool)
+			timerSeconds, userCards, reservedCards, totalPool)
 	}
 
 	// ✅ Log when timer is close to 0
-	if int(state.Timer.Seconds()) <= 3 && int(state.Timer.Seconds()) > 0 {
+	if timerSeconds <= 3 && timerSeconds > 0 {
 		log.Printf("⏰ Timer at %d seconds! Reserved cards: %d", 
-			int(state.Timer.Seconds()), len(state.ReservedCards))
+			timerSeconds, reservedCards)
 	}
 
-	if state.Timer <= 0 {
-		log.Printf("🚀🚀🚀 TIMER REACHED 0! Reserved cards: %d", len(state.ReservedCards))
+	if timerSeconds <= 0 {
+		log.Printf("🚀🚀🚀 TIMER REACHED 0! Reserved cards: %d", reservedCards)
 		
-		if len(state.ReservedCards) == 0 {
+		if reservedCards == 0 {
 			log.Println("⚠️ No cards reserved, cancelling game...")
-			// ✅ Unlock before calling endGame
-			state.mu.Unlock()
 			e.endGame(state, nil)
 			return
 		}
 		
 		log.Println("🚀 STARTING GAME - calling startCalling()...")
-		
-		// ✅ CRITICAL: Unlock before calling startCalling to prevent deadlock
-		state.mu.Unlock()
 		e.startCalling(state)
 		log.Println("✅ startCalling() completed")
 		return
 	}
 
-	grossPool := state.Game.TotalPool
+	grossPool := totalPool
 	netPool, houseCut := GetPoolBreakdown(grossPool)
 
 	e.broadcast(GameEvent{
 		Type:       "timer.tick",
-		GameID:     state.Game.ID.String(),
+		GameID:     gameID.String(),
 		Status:     GameStatusWaiting,
-		Timer:      int(state.Timer.Seconds()),
-		Players:    e.getPlayerCount(state.Game.ID),
-		BoardCount: e.getBoardCount(state.Game.ID),
+		Timer:      timerSeconds,
+		Players:    e.getPlayerCount(gameID),
+		BoardCount: e.getBoardCount(gameID),
 		Pool:       netPool,
 		GrossPool:  grossPool,
 		HouseCut:   houseCut,
@@ -114,33 +118,35 @@ func (e *Engine) handleWaitingState(state *GameState) {
 
 // handleCallingState handles the active calling state
 func (e *Engine) handleCallingState(state *GameState) {
+	// ✅ Lock just to update timer
+	state.mu.Lock()
 	state.Timer -= time.Second
 	if state.Timer < 0 {
 		state.Timer = 0
 	}
+	timerSeconds := int(state.Timer.Seconds())
+	calledCount := len(state.CalledNums)
+	callIndex := state.CallIndex
+	userCards := len(state.UserCards)
+	totalPool := state.Game.TotalPool
+	gameID := state.Game.ID
+	state.mu.Unlock()
 
 	// ✅ Log calling state every tick
-	log.Printf("🔊 CALLING: Timer=%d, Called=%d/75, CallIndex=%d, Players=%d, Pool=%.2f", 
-		int(state.Timer.Seconds()), 
-		len(state.CalledNums), 
-		state.CallIndex,
-		len(state.UserCards),
-		state.Game.TotalPool)
+	// ✅ Log calling state every tick
+log.Printf("🔊 CALLING: Timer=%d, Called=%d/75, CallIndex=%d, Players=%d, Pool=%.2f, GameID=%d", 
+    timerSeconds, calledCount, callIndex, userCards, totalPool, gameID)
 
-	if state.Timer <= 0 {
-		log.Printf("⏰ Calling timer reached 0! CallIndex=%d, MaxCalls=%d", state.CallIndex, MaxCalls)
+	if timerSeconds <= 0 {
+		log.Printf("⏰ Calling timer reached 0! CallIndex=%d, MaxCalls=%d", callIndex, MaxCalls)
 		
-		if state.CallIndex >= MaxCalls {
+		if callIndex >= MaxCalls {
 			log.Println("🏁 Max calls reached, ending game...")
-			// ✅ Unlock before calling endGame
-			state.mu.Unlock()
 			e.endGame(state, nil)
 			return
 		}
 		
 		log.Println("📞 Calling next number...")
-		// ✅ Unlock before calling callNextNumber
-		state.mu.Unlock()
 		e.callNextNumber(state)
 		log.Println("✅ callNextNumber() completed")
 	}
@@ -223,14 +229,21 @@ func (e *Engine) endGame(state *GameState, winner *WinnerInfo) {
 		e.botManager.StopBotRoutine()
 	}
 	
+	state.mu.Lock()
 	state.Game.Status = GameStatusFinished
 	now := time.Now()
 	state.Game.EndedAt = &now
+	
+	if winner != nil {
+		state.Game.WinnerUserID = &winner.UserID
+		state.Game.WinnerPrize = winner.Prize
+	}
+	gameID := state.Game.ID
+	totalPool := state.Game.TotalPool
+	state.mu.Unlock()
 
 	if winner != nil {
 		log.Printf("💰 Winner: UserID=%d, Prize=%.2f", winner.UserID, winner.Prize)
-		state.Game.WinnerUserID = &winner.UserID
-		state.Game.WinnerPrize = winner.Prize
 
 		// Update winner balance
 		e.db.Model(&models.User{}).Where("id = ?", winner.UserID).
@@ -250,18 +263,20 @@ func (e *Engine) endGame(state *GameState, winner *WinnerInfo) {
 		log.Println("📌 No winner - game ended without a winner")
 	}
 
+	state.mu.Lock()
 	if err := e.db.Save(state.Game).Error; err != nil {
 		log.Printf("⚠️ Failed to save game: %v", err)
 	} else {
 		log.Printf("✅ Game saved to database")
 	}
+	state.mu.Unlock()
 
-	grossPool := state.Game.TotalPool
+	grossPool := totalPool
 	netPool, houseCut := GetPoolBreakdown(grossPool)
 
 	e.broadcast(GameEvent{
 		Type:      "game.ended",
-		GameID:    state.Game.ID.String(),
+		GameID:    gameID.String(),
 		Status:    GameStatusFinished,
 		Winner:    winner,
 		Pool:      netPool,
