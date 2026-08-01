@@ -36,11 +36,7 @@ func (b *Bot) handleCallback(ctx context.Context, callback *telego.CallbackQuery
 		CallbackQueryID: callback.ID,
 	})
     
-		// Check for monitoring callbacks
-	if strings.HasPrefix(data, "health_") || strings.HasPrefix(data, "memory_") || strings.HasPrefix(data, "monitor_") {
-		b.handleMonitoringCallbacks(ctx, callback)
-		return
-	}
+	
 	// Menu navigation
 	if strings.HasPrefix(data, "menu_") {
 		b.handleMenuNavigation(ctx, chatID, data)
@@ -511,26 +507,4 @@ func (b *Bot) handleStatsCallback(ctx context.Context, chatID int64, data string
     default:
         b.showStatsMenu(ctx, chatID)
     }
-}
-func (b *Bot) handleMonitoringCallbacks(ctx context.Context, query *telego.CallbackQuery) {
-	data := query.Data
-	chatID := query.Message.GetChat().ID
-
-	b.api.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
-		CallbackQueryID: query.ID,
-	})
-
-	switch data {
-	case "health_refresh":
-		b.handleHealth(ctx, chatID)
-		
-	case "memory_refresh":
-		b.handleMemory(ctx, chatID)
-		
-	case "monitor_refresh":
-		b.handleMonitor(ctx, chatID)
-		
-	default:
-		b.sendText(ctx, chatID, "❌ Unknown action.")
-	}
 }
