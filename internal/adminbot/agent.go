@@ -3,6 +3,7 @@ package adminbot
 import (
 	"context"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -120,7 +121,7 @@ func (b *Bot) showAgentsMenu(ctx context.Context, chatID int64) {
 			{Text: "➖ Remove Agent", CallbackData: "agents_remove"},
 		},
 		{
-			{Text: "📋 Pending Requests", CallbackData: "agents_pending_1"},
+			{Text: fmt.Sprintf("📋 Pending Requests (%d)", pendingCount), CallbackData: "agents_pending_1"},
 			{Text: "👥 All Agents", CallbackData: "agents_all"},
 		},
 		{
@@ -134,7 +135,6 @@ func (b *Bot) showAgentsMenu(ctx context.Context, chatID int64) {
 	
 	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
 }
-
 // ============ ADD AGENT FLOW ============
 
 func (b *Bot) handleAddAgentFlow(ctx context.Context, chatID int64) {
@@ -997,25 +997,34 @@ func (b *Bot) handleAgentCallbacks(ctx context.Context, query *telego.CallbackQu
 	data := query.Data
 	chatID := query.Message.GetChat().ID
 
+	// ✅ Add debug log
+	log.Printf("🔵 Agent callback received: %s from chat %d", data, chatID)
+
 	b.api.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
 		CallbackQueryID: query.ID,
 	})
 
 	parts := strings.Split(data, "_")
 	if len(parts) < 2 {
+		log.Printf("⚠️ Invalid callback data format: %s", data)
 		return
 	}
+
+	log.Printf("🔍 Parsed callback: prefix=%s, action=%s, parts=%v", parts[0], parts[1], parts)
 
 	switch parts[0] {
 	case "agents":
 		switch parts[1] {
 		case "menu":
+			log.Println("📋 Showing agents menu")
 			b.showAgentsMenu(ctx, chatID)
 			
 		case "add":
+			log.Println("➕ Add agent flow")
 			b.handleAddAgentFlow(ctx, chatID)
 			
 		case "remove":
+			log.Println("➖ Remove agent flow")
 			b.handleRemoveAgentFlow(ctx, chatID)
 			
 		case "pending":
@@ -1025,23 +1034,28 @@ func (b *Bot) handleAgentCallbacks(ctx context.Context, query *telego.CallbackQu
 					page = p
 				}
 			}
+			log.Printf("📋 Showing pending agents page %d", page)
 			b.showPendingAgents(ctx, chatID, page)
 			
 		case "all":
+			log.Println("👥 Showing all agents")
 			b.showAllAgents(ctx, chatID)
 			
 		case "search":
+			log.Println("🔍 Search agents flow")
 			b.sendMarkdown(ctx, chatID,
 				"🔍 *Search Agents*\n\n"+
 				"📱 Enter phone number or username to search for agents:")
 			b.tempState.Store(chatID, "awaiting_agent_search")
 			
 		case "commissions":
+			log.Println("💰 Showing agent commissions")
 			b.showAgentCommissions(ctx, chatID)
 			
 		case "approve":
 			if len(parts) > 2 {
 				id, _ := strconv.Atoi(parts[2])
+				log.Printf("✅ Approving agent request #%d", id)
 				b.approveAgent(ctx, chatID, uint(id))
 				// Refresh pending list after action
 				b.showPendingAgents(ctx, chatID, 1)
@@ -1050,6 +1064,7 @@ func (b *Bot) handleAgentCallbacks(ctx context.Context, query *telego.CallbackQu
 		case "reject":
 			if len(parts) > 2 {
 				id, _ := strconv.Atoi(parts[2])
+				log.Printf("❌ Rejecting agent request #%d", id)
 				b.rejectAgent(ctx, chatID, uint(id))
 				// Refresh pending list after action
 				b.showPendingAgents(ctx, chatID, 1)
@@ -1058,21 +1073,31 @@ func (b *Bot) handleAgentCallbacks(ctx context.Context, query *telego.CallbackQu
 		case "view":
 			if len(parts) > 2 {
 				id, _ := strconv.Atoi(parts[2])
+				log.Printf("👤 Viewing agent request #%d", id)
 				b.viewAgent(ctx, chatID, uint(id))
 			}
 			
 		case "confirm_add":
 			if len(parts) > 2 {
 				userID, _ := strconv.ParseInt(parts[2], 10, 64)
+				log.Printf("✅ Confirming add agent for user %d", userID)
 				b.executeAddAgent(ctx, chatID, userID)
 			}
 			
 		case "confirm_remove":
 			if len(parts) > 2 {
 				userID, _ := strconv.ParseInt(parts[2], 10, 64)
+				log.Printf("✅ Confirming remove agent for user %d", userID)
 				b.executeRemoveAgent(ctx, chatID, userID)
 			}
+			
+		default:
+			log.Printf("⚠️ Unknown agent action: %s", parts[1])
+			b.sendText(ctx, chatID, "❌ Unknown agent action.")
 		}
+	default:
+		log.Printf("⚠️ Unexpected callback prefix: %s", parts[0])
+		b.sendText(ctx, chatID, "❌ Unknown callback.")
 	}
 }
 
