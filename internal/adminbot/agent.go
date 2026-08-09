@@ -601,52 +601,14 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 		Offset(offset).
 		Find(&requests)
 
-	text := fmt.Sprintf("📋 *Pending Applications*\n\n"+
-		"📊 Total: %d | Page %d/%d\n\n",
+	// Send header message with pagination
+	headerText := fmt.Sprintf("📋 *Pending Applications*\n\n"+
+		"📊 Total: %d | Page %d/%d\n\n"+
+		"Click on each request below to approve or reject:",
 		totalRequests, page, totalPages)
 
-	var keyboard [][]telego.InlineKeyboardButton
-
-	for _, req := range requests {
-		// Escape special characters for Markdown
-		username := escapeMarkdown(req.Username)
-		phone := escapeMarkdown(formatPhoneNumber(req.PhoneNumber))
-		
-		// Add agent info
-		text += fmt.Sprintf(
-			"📌 *Request #%d*\n"+
-			"👤 @%s\n"+
-			"🆔 `%d`\n"+
-			"📱 %s\n"+
-			"📅 %s\n\n",
-			req.ID,
-			username,
-			req.UserID,
-			phone,
-			req.CreatedAt.Format("Jan 2, 2006 15:04"),
-		)
-
-		// Add buttons under each agent
-		row := []telego.InlineKeyboardButton{
-			{
-				Text:         "✅ Approve",
-				CallbackData: fmt.Sprintf("agents_approve_%d", req.ID),
-			},
-			{
-				Text:         "❌ Reject",
-				CallbackData: fmt.Sprintf("agents_reject_%d", req.ID),
-			},
-			{
-				Text:         "👤 View",
-				CallbackData: fmt.Sprintf("agents_view_%d", req.ID),
-			},
-		}
-		keyboard = append(keyboard, row)
-		
-		// Add separator
-		text += "─ ─ ─ ─ ─ ─ ─ ─ ─ ─\n\n"
-	}
-
+	headerKeyboard := [][]telego.InlineKeyboardButton{}
+	
 	// Navigation row (if more than one page)
 	if totalPages > 1 {
 		var navRow []telego.InlineKeyboardButton
@@ -666,16 +628,62 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 		}
 		
 		if len(navRow) > 0 {
-			keyboard = append(keyboard, navRow)
+			headerKeyboard = append(headerKeyboard, navRow)
 		}
 	}
 	
 	// Back button
-	keyboard = append(keyboard, []telego.InlineKeyboardButton{
+	headerKeyboard = append(headerKeyboard, []telego.InlineKeyboardButton{
 		{Text: "🔙 Back to Agents", CallbackData: "agents_menu"},
 	})
 	
-	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+	// Send header
+	b.sendMarkdownKeyboard(ctx, chatID, headerText, headerKeyboard)
+
+	// Send each request as a separate message with its own buttons
+	for _, req := range requests {
+		// Escape special characters for Markdown
+		username := escapeMarkdown(req.Username)
+		phone := escapeMarkdown(formatPhoneNumber(req.PhoneNumber))
+		
+		// Build agent info text
+		text := fmt.Sprintf(
+			"📌 *Request #%d*\n"+
+			"👤 @%s\n"+
+			"🆔 `%d`\n"+
+			"📱 %s\n"+
+			"📅 %s",
+			req.ID,
+			username,
+			req.UserID,
+			phone,
+			req.CreatedAt.Format("Jan 2, 2006 15:04"),
+		)
+
+		// Build buttons for this agent
+		keyboard := [][]telego.InlineKeyboardButton{
+			{
+				{
+					Text:         "✅ Approve",
+					CallbackData: fmt.Sprintf("agents_approve_%d", req.ID),
+				},
+				{
+					Text:         "❌ Reject",
+					CallbackData: fmt.Sprintf("agents_reject_%d", req.ID),
+				},
+				{
+					Text:         "👤 View",
+					CallbackData: fmt.Sprintf("agents_view_%d", req.ID),
+				},
+			},
+		}
+		
+		// Send each agent as a separate message
+		b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+		
+		// Small delay to avoid rate limiting
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 // ✅ escapeMarkdown escapes special characters for Telegram Markdown
 func escapeMarkdown(text string) string {
