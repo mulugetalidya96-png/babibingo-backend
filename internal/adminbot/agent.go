@@ -605,13 +605,17 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 		"📊 Total: %d | Page %d/%d\n\n",
 		totalRequests, page, totalPages)
 
+	// Build keyboard with buttons under each agent
+	var keyboard [][]telego.InlineKeyboardButton
+
 	for _, req := range requests {
 		// ✅ Escape special characters for Markdown
 		username := escapeMarkdown(req.Username)
 		phone := escapeMarkdown(formatPhoneNumber(req.PhoneNumber))
 		
+		// Add agent info
 		text += fmt.Sprintf(
-			"📌 #%d\n"+
+			"📌 *Request #%d*\n"+
 			"👤 @%s\n"+
 			"🆔 `%d`\n"+
 			"📱 %s\n"+
@@ -622,24 +626,41 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 			phone,
 			req.CreatedAt.Format("Jan 2, 2006 15:04"),
 		)
+
+		// ✅ Add buttons under each agent
+		row := []telego.InlineKeyboardButton{
+			{
+				Text:         fmt.Sprintf("✅ Approve #%d", req.ID),
+				CallbackData: fmt.Sprintf("agents_approve_%d", req.ID),
+			},
+			{
+				Text:         fmt.Sprintf("❌ Reject #%d", req.ID),
+				CallbackData: fmt.Sprintf("agents_reject_%d", req.ID),
+			},
+			{
+				Text:         fmt.Sprintf("👤 View #%d", req.ID),
+				CallbackData: fmt.Sprintf("agents_view_%d", req.ID),
+			},
+		}
+		keyboard = append(keyboard, row)
+		
+		// Add a separator line (empty row) for visual clarity
+		text += "─ ─ ─ ─ ─ ─ ─ ─ ─ ─\n\n"
 	}
 
-	// Create pagination buttons
-	var keyboard [][]telego.InlineKeyboardButton
-	
-	// Navigation row
+	// Navigation row (Previous/Next)
 	var navRow []telego.InlineKeyboardButton
 	
 	if page > 1 {
 		navRow = append(navRow, telego.InlineKeyboardButton{
-			Text: "⬅️ Previous",
+			Text:         "⬅️ Previous",
 			CallbackData: fmt.Sprintf("agents_pending_%d", page-1),
 		})
 	}
 	
 	if page < totalPages {
 		navRow = append(navRow, telego.InlineKeyboardButton{
-			Text: "Next ➡️",
+			Text:         "Next ➡️",
 			CallbackData: fmt.Sprintf("agents_pending_%d", page+1),
 		})
 	}
@@ -648,45 +669,13 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 		keyboard = append(keyboard, navRow)
 	}
 	
-	// Add action buttons for the first request on the page (or show more options)
-	if len(requests) > 0 {
-		var actionRow []telego.InlineKeyboardButton
-		
-		// Only show approve/reject for the first request to keep it clean
-		// Or you could show for all with more compact buttons
-		for i, req := range requests {
-			if i >= 3 { // Limit to 3 requests with quick actions
-				break
-			}
-			actionRow = append(actionRow, telego.InlineKeyboardButton{
-				Text: fmt.Sprintf("✅ #%d", req.ID),
-				CallbackData: fmt.Sprintf("agents_approve_%d", req.ID),
-			})
-			actionRow = append(actionRow, telego.InlineKeyboardButton{
-				Text: fmt.Sprintf("❌ #%d", req.ID),
-				CallbackData: fmt.Sprintf("agents_reject_%d", req.ID),
-			})
-		}
-		if len(actionRow) > 0 {
-			keyboard = append(keyboard, actionRow)
-		}
-		
-		// View details button for first request
-		if len(requests) > 0 {
-			keyboard = append(keyboard, []telego.InlineKeyboardButton{
-				{Text: fmt.Sprintf("👤 View #%d Details", requests[0].ID), 
-				 CallbackData: fmt.Sprintf("agents_view_%d", requests[0].ID)},
-			})
-		}
-	}
-	
+	// Back button
 	keyboard = append(keyboard, []telego.InlineKeyboardButton{
 		{Text: "🔙 Back to Agents", CallbackData: "agents_menu"},
 	})
 	
 	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
 }
-
 // ✅ escapeMarkdown escapes special characters for Telegram Markdown
 func escapeMarkdown(text string) string {
 	replacer := strings.NewReplacer(
