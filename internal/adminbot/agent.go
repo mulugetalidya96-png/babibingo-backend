@@ -34,7 +34,7 @@ func (b *Bot) handleAgents(ctx context.Context, chatID int64, args []string) {
 		b.showPendingAgents(ctx, chatID, 1) // Start from page 1
 		
 	case "all":
-		b.showAllAgents(ctx, chatID)
+		b.showAllAgents(ctx, chatID,1)
 		
 	case "add":
 		b.handleAddAgentFlow(ctx, chatID)
@@ -122,7 +122,7 @@ func (b *Bot) showAgentsMenu(ctx context.Context, chatID int64) {
 		},
 		{
 			{Text: fmt.Sprintf("📋 Pending Requests (%d)", pendingCount), CallbackData: "agents_pending_1"},
-			{Text: "👥 All Agents", CallbackData: "agents_all"},
+			{Text: "👥 All Agents", CallbackData: "agents_all_1"},
 		},
 		{
 			{Text: "🔍 Search Agents", CallbackData: "agents_search"},
@@ -609,30 +609,32 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 
 	headerKeyboard := [][]telego.InlineKeyboardButton{}
 	
-	// Navigation row (if more than one page)
-	if totalPages > 1 {
-		var navRow []telego.InlineKeyboardButton
-		
-		if page > 1 {
-			navRow = append(navRow, telego.InlineKeyboardButton{
-				Text:         "⬅️ Previous",
-				CallbackData: fmt.Sprintf("agents_pending_%d", page-1),
-			})
-		}
-		
-		if page < totalPages {
-			navRow = append(navRow, telego.InlineKeyboardButton{
-				Text:         "Next ➡️",
-				CallbackData: fmt.Sprintf("agents_pending_%d", page+1),
-			})
-		}
-		
-		if len(navRow) > 0 {
-			headerKeyboard = append(headerKeyboard, navRow)
-		}
+	// Navigation row
+	var navRow []telego.InlineKeyboardButton
+	
+	if page > 1 {
+		navRow = append(navRow, telego.InlineKeyboardButton{
+			Text:         "⬅️ Previous",
+			CallbackData: fmt.Sprintf("agents_pending_%d", page-1),
+		})
 	}
 	
-	// Back button
+	if page < totalPages {
+		navRow = append(navRow, telego.InlineKeyboardButton{
+			Text:         "Next ➡️",
+			CallbackData: fmt.Sprintf("agents_pending_%d", page+1),
+		})
+	}
+	
+	if len(navRow) > 0 {
+		headerKeyboard = append(headerKeyboard, navRow)
+	}
+	
+	// Add page indicator and back button
+	headerKeyboard = append(headerKeyboard, []telego.InlineKeyboardButton{
+		{Text: fmt.Sprintf("📄 Page %d/%d", page, totalPages), CallbackData: "agents_current"},
+	})
+	
 	headerKeyboard = append(headerKeyboard, []telego.InlineKeyboardButton{
 		{Text: "🔙 Back to Agents", CallbackData: "agents_menu"},
 	})
@@ -641,7 +643,8 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 	b.sendMarkdownKeyboard(ctx, chatID, headerText, headerKeyboard)
 
 	// Send each request as a separate message with its own buttons
-	for _, req := range requests {
+	// With a small delay between messages to avoid rate limiting
+	for i, req := range requests {
 		// Escape special characters for Markdown
 		username := escapeMarkdown(req.Username)
 		phone := escapeMarkdown(formatPhoneNumber(req.PhoneNumber))
@@ -681,8 +684,11 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 		// Send each agent as a separate message
 		b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
 		
-		// Small delay to avoid rate limiting
-		time.Sleep(100 * time.Millisecond)
+		// Small delay between messages to avoid rate limiting
+		// Telegram allows ~30 messages per second
+		if (i+1)%10 == 0 {
+			time.Sleep(200 * time.Millisecond)
+		}
 	}
 }
 // ✅ escapeMarkdown escapes special characters for Telegram Markdown
@@ -712,11 +718,15 @@ func escapeMarkdown(text string) string {
 
 // ============ ALL AGENTS ============
 
-func (b *Bot) showAllAgents(ctx context.Context, chatID int64) {
-	var agents []models.User
-	b.db.Where("is_agent = ?", true).Order("created_at DESC").Find(&agents)
+func (b *Bot) showAllAgents(ctx context.Context, chatID int64, page int) {
+	if page < 1 {
+		page = 1
+	}
 
-	if len(agents) == 0 {
+	var totalAgents int64
+	b.db.Model(&models.User{}).Where("is_agent = ?", true).Count(&totalAgents)
+
+	if totalAgents == 0 {
 		text := "📋 *No Agents Found*\n\n" +
 			"There are currently no agents in the system."
 		
@@ -728,14 +738,28 @@ func (b *Bot) showAllAgents(ctx context.Context, chatID int64) {
 		return
 	}
 
-	text := fmt.Sprintf("👥 *All Agents*\n\nTotal: %d\n\n", len(agents))
+	// Calculate total pages
+	pageSize := 10
+	totalPages := int((totalAgents + int64(pageSize) - 1) / int64(pageSize))
+	if page > totalPages {
+		page = totalPages
+	}
+
+	offset := (page - 1) * pageSize
+
+	var agents []models.User
+	b.db.Where("is_agent = ?", true).
+		Order("created_at DESC").
+		Limit(pageSize).
+		Offset(offset).
+		Find(&agents)
+
+	// Send header with pagination
+	text := fmt.Sprintf("👥 *All Agents*\n\n"+
+		"📊 Total: %d | Page %d/%d\n\n",
+		totalAgents, page, totalPages)
 	
 	for i, agent := range agents {
-		if i >= 15 {
-			text += fmt.Sprintf("... and %d more\n", len(agents)-15)
-			break
-		}
-		
 		var referralCount int64
 		b.db.Model(&models.User{}).Where("referred_by = ?", agent.ID).Count(&referralCount)
 		
@@ -749,7 +773,7 @@ func (b *Bot) showAllAgents(ctx context.Context, chatID int64) {
 			"   👥 Referrals: %d\n"+
 			"   📱 %s\n"+
 			"   🆔 `%d`\n\n",
-			i+1,
+			offset+i+1,
 			username,
 			agent.AgentBalance,
 			referralCount,
@@ -758,15 +782,44 @@ func (b *Bot) showAllAgents(ctx context.Context, chatID int64) {
 		)
 	}
 	
-	keyboard := [][]telego.InlineKeyboardButton{
-		{
-			{Text: "➕ Add Agent", CallbackData: "agents_add"},
-			{Text: "➖ Remove Agent", CallbackData: "agents_remove"},
-		},
-		{
-			{Text: "🔙 Back to Menu", CallbackData: "agents_menu"},
-		},
+	// Build keyboard with pagination
+	var keyboard [][]telego.InlineKeyboardButton
+	
+	// Navigation row
+	var navRow []telego.InlineKeyboardButton
+	
+	if page > 1 {
+		navRow = append(navRow, telego.InlineKeyboardButton{
+			Text:         "⬅️ Previous",
+			CallbackData: fmt.Sprintf("agents_all_%d", page-1),
+		})
 	}
+	
+	if page < totalPages {
+		navRow = append(navRow, telego.InlineKeyboardButton{
+			Text:         "Next ➡️",
+			CallbackData: fmt.Sprintf("agents_all_%d", page+1),
+		})
+	}
+	
+	if len(navRow) > 0 {
+		keyboard = append(keyboard, navRow)
+	}
+	
+	// Add page indicator
+	keyboard = append(keyboard, []telego.InlineKeyboardButton{
+		{Text: fmt.Sprintf("📄 Page %d/%d", page, totalPages), CallbackData: "agents_current"},
+	})
+	
+	// Action buttons
+	keyboard = append(keyboard, []telego.InlineKeyboardButton{
+		{Text: "➕ Add Agent", CallbackData: "agents_add"},
+		{Text: "➖ Remove Agent", CallbackData: "agents_remove"},
+	})
+	
+	keyboard = append(keyboard, []telego.InlineKeyboardButton{
+		{Text: "🔙 Back to Menu", CallbackData: "agents_menu"},
+	})
 	
 	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
 }
@@ -1071,9 +1124,15 @@ func (b *Bot) handleAgentCallbacks(ctx context.Context, query *telego.CallbackQu
 			log.Printf("📋 Showing pending agents page %d", page)
 			b.showPendingAgents(ctx, chatID, page)
 			
-		case "all":
-			log.Println("👥 Showing all agents")
-			b.showAllAgents(ctx, chatID)
+		// In handleAgentCallbacks function
+case "all":
+    page := 1
+    if len(parts) > 2 {
+        if p, err := strconv.Atoi(parts[2]); err == nil {
+            page = p
+        }
+    }
+    b.showAllAgents(ctx, chatID, page)
 			
 		case "search":
 			log.Println("🔍 Search agents flow")
