@@ -566,13 +566,23 @@ func (b *Bot) searchAgents(ctx context.Context, chatID int64, query string) {
 
 // ============ PENDING AGENTS WITH PAGINATION ============
 
+// ============ PENDING AGENTS WITH PAGINATION ============
+
 func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
+	log.Printf("📋 Showing pending agents - Page %d", page)
+
 	if page < 1 {
 		page = 1
 	}
 
 	var totalRequests int64
-	b.db.Model(&AgentRequest{}).Where("status = ?", "pending").Count(&totalRequests)
+	if err := b.db.Model(&AgentRequest{}).Where("status = ?", "pending").Count(&totalRequests).Error; err != nil {
+		log.Printf("❌ Failed to count pending requests: %v", err)
+		b.sendText(ctx, chatID, "❌ Failed to load pending requests.")
+		return
+	}
+
+	log.Printf("📊 Total pending requests: %d", totalRequests)
 
 	if totalRequests == 0 {
 		text := "📋 *No Pending Applications*\n\n" +
@@ -595,13 +605,20 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 	offset := (page - 1) * pendingPageSize
 
 	var requests []AgentRequest
-	b.db.Where("status = ?", "pending").
+	if err := b.db.Where("status = ?", "pending").
 		Order("created_at DESC").
 		Limit(pendingPageSize).
 		Offset(offset).
-		Find(&requests)
+		Find(&requests).Error; err != nil {
+		log.Printf("❌ Failed to fetch pending requests: %v", err)
+		b.sendText(ctx, chatID, "❌ Failed to load pending requests.")
+		return
+	}
 
-	text := fmt.Sprintf("📋 *Pending Applications*\n\n"+
+	log.Printf("📊 Fetched %d requests for page %d", len(requests), page)
+
+	// ✅ Build text without markdown issues - use plain text with emojis
+	text := fmt.Sprintf("📋 PENDING APPLICATIONS\n\n" +
 		"📊 Total: %d | Page %d/%d\n\n",
 		totalRequests, page, totalPages)
 
@@ -609,7 +626,7 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 		text += fmt.Sprintf(
 			"📌 #%d\n"+
 			"👤 @%s\n"+
-			"🆔 `%d`\n"+
+			"🆔 %d\n"+
 			"📱 %s\n"+
 			"📅 %s\n\n",
 			req.ID,
@@ -644,14 +661,12 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 		keyboard = append(keyboard, navRow)
 	}
 	
-	// Add action buttons for the first request on the page (or show more options)
+	// Add action buttons for the first few requests
 	if len(requests) > 0 {
 		var actionRow []telego.InlineKeyboardButton
 		
-		// Only show approve/reject for the first request to keep it clean
-		// Or you could show for all with more compact buttons
-		for i, req := range requests {
-			if i >= 3 { // Limit to 3 requests with quick actions
+		for idx, req := range requests {
+			if idx >= 3 {
 				break
 			}
 			actionRow = append(actionRow, telego.InlineKeyboardButton{
@@ -668,19 +683,30 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 		}
 		
 		// View details button for first request
-		if len(requests) > 0 {
-			keyboard = append(keyboard, []telego.InlineKeyboardButton{
-				{Text: fmt.Sprintf("👤 View #%d Details", requests[0].ID), 
-				 CallbackData: fmt.Sprintf("agents_view_%d", requests[0].ID)},
-			})
-		}
+		keyboard = append(keyboard, []telego.InlineKeyboardButton{
+			{Text: fmt.Sprintf("👤 View #%d Details", requests[0].ID), 
+			 CallbackData: fmt.Sprintf("agents_view_%d", requests[0].ID)},
+		})
 	}
 	
 	keyboard = append(keyboard, []telego.InlineKeyboardButton{
 		{Text: "🔙 Back to Agents", CallbackData: "agents_menu"},
 	})
 	
-	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+	// ✅ Use HTML parse mode instead of Markdown
+	msg := telego.SendMessageParams{
+		ChatID: telego.ChatID{ID: chatID},
+		Text: text,
+		ParseMode: "HTML",
+		ReplyMarkup: &telego.InlineKeyboardMarkup{
+			InlineKeyboard: keyboard,
+		},
+	}
+	
+	if _, err := b.api.SendMessage(ctx, &msg); err != nil {
+		log.Printf("❌ Failed to send pending agents message: %v", err)
+		b.sendText(ctx, chatID, "❌ Failed to display pending agents.")
+	}
 }
 
 // ============ ALL AGENTS ============

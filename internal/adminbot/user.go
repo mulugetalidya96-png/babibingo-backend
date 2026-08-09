@@ -261,7 +261,7 @@ func (b *Bot) listUsers(ctx context.Context, chatID int64, page int) {
 
 	totalPages := int((total + int64(limit) - 1) / int64(limit))
 
-	text := fmt.Sprintf("👥 *Users (Page %d/%d)*\n", page, totalPages)
+	text := fmt.Sprintf("👥 <b>Users (Page %d/%d)</b>\n", page, totalPages)
 	text += fmt.Sprintf("📊 Total: %d users\n\n", total)
 
 	for i, user := range users {
@@ -283,7 +283,7 @@ func (b *Bot) listUsers(ctx context.Context, chatID int64, page int) {
 		}
 
 		text += fmt.Sprintf(
-			"%d. %s @%s%s\n   💰 %.2f ETB | 📱 %s\n   🆔 `%d`\n\n",
+			"%d. %s @%s%s\n   💰 %.2f ETB | 📱 %s\n   🆔 <code>%d</code>\n\n",
 			offset+i+1,
 			activeBadge,
 			username,
@@ -319,7 +319,20 @@ func (b *Bot) listUsers(ctx context.Context, chatID int64, page int) {
 		{Text: "🔙 Back to Menu", CallbackData: "back_to_menu"},
 	})
 
-	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+	// ✅ Use HTML parse mode
+	msg := telego.SendMessageParams{
+		ChatID: telego.ChatID{ID: chatID},
+		Text: text,
+		ParseMode: "HTML",
+		ReplyMarkup: &telego.InlineKeyboardMarkup{
+			InlineKeyboard: keyboard,
+		},
+	}
+	
+	if _, err := b.api.SendMessage(ctx, &msg); err != nil {
+		log.Printf("❌ Failed to send users list: %v", err)
+		b.sendText(ctx, chatID, "❌ Failed to display users.")
+	}
 }
 
 // ============ SMART SEARCH ============
