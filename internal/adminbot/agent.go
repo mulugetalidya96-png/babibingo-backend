@@ -605,11 +605,10 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 		"📊 Total: %d | Page %d/%d\n\n",
 		totalRequests, page, totalPages)
 
-	// Build keyboard with buttons under each agent
 	var keyboard [][]telego.InlineKeyboardButton
 
 	for _, req := range requests {
-		// ✅ Escape special characters for Markdown
+		// Escape special characters for Markdown
 		username := escapeMarkdown(req.Username)
 		phone := escapeMarkdown(formatPhoneNumber(req.PhoneNumber))
 		
@@ -627,46 +626,48 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 			req.CreatedAt.Format("Jan 2, 2006 15:04"),
 		)
 
-		// ✅ Add buttons under each agent
+		// Add buttons under each agent
 		row := []telego.InlineKeyboardButton{
 			{
-				Text:         fmt.Sprintf("✅ Approve #%d", req.ID),
+				Text:         "✅ Approve",
 				CallbackData: fmt.Sprintf("agents_approve_%d", req.ID),
 			},
 			{
-				Text:         fmt.Sprintf("❌ Reject #%d", req.ID),
+				Text:         "❌ Reject",
 				CallbackData: fmt.Sprintf("agents_reject_%d", req.ID),
 			},
 			{
-				Text:         fmt.Sprintf("👤 View #%d", req.ID),
+				Text:         "👤 View",
 				CallbackData: fmt.Sprintf("agents_view_%d", req.ID),
 			},
 		}
 		keyboard = append(keyboard, row)
 		
-		// Add a separator line (empty row) for visual clarity
+		// Add separator
 		text += "─ ─ ─ ─ ─ ─ ─ ─ ─ ─\n\n"
 	}
 
-	// Navigation row (Previous/Next)
-	var navRow []telego.InlineKeyboardButton
-	
-	if page > 1 {
-		navRow = append(navRow, telego.InlineKeyboardButton{
-			Text:         "⬅️ Previous",
-			CallbackData: fmt.Sprintf("agents_pending_%d", page-1),
-		})
-	}
-	
-	if page < totalPages {
-		navRow = append(navRow, telego.InlineKeyboardButton{
-			Text:         "Next ➡️",
-			CallbackData: fmt.Sprintf("agents_pending_%d", page+1),
-		})
-	}
-	
-	if len(navRow) > 0 {
-		keyboard = append(keyboard, navRow)
+	// Navigation row (if more than one page)
+	if totalPages > 1 {
+		var navRow []telego.InlineKeyboardButton
+		
+		if page > 1 {
+			navRow = append(navRow, telego.InlineKeyboardButton{
+				Text:         "⬅️ Previous",
+				CallbackData: fmt.Sprintf("agents_pending_%d", page-1),
+			})
+		}
+		
+		if page < totalPages {
+			navRow = append(navRow, telego.InlineKeyboardButton{
+				Text:         "Next ➡️",
+				CallbackData: fmt.Sprintf("agents_pending_%d", page+1),
+			})
+		}
+		
+		if len(navRow) > 0 {
+			keyboard = append(keyboard, navRow)
+		}
 	}
 	
 	// Back button
@@ -730,6 +731,10 @@ func (b *Bot) showAllAgents(ctx context.Context, chatID int64) {
 		var referralCount int64
 		b.db.Model(&models.User{}).Where("referred_by = ?", agent.ID).Count(&referralCount)
 		
+		// ✅ Escape special characters for Markdown
+		username := escapeMarkdown(agent.Username)
+		phone := escapeMarkdown(formatPhoneNumber(agent.PhoneNumber))
+		
 		text += fmt.Sprintf(
 			"%d. @%s\n"+
 			"   💰 Agent Balance: %.2f ETB\n"+
@@ -737,10 +742,10 @@ func (b *Bot) showAllAgents(ctx context.Context, chatID int64) {
 			"   📱 %s\n"+
 			"   🆔 `%d`\n\n",
 			i+1,
-			agent.Username,
+			username,
 			agent.AgentBalance,
 			referralCount,
-			formatPhoneNumber(agent.PhoneNumber),
+			phone,
 			agent.TelegramID,
 		)
 	}
@@ -985,12 +990,15 @@ func (b *Bot) showAgentCommissions(ctx context.Context, chatID int64) {
 		var referralCount int64
 		b.db.Model(&models.User{}).Where("referred_by = ?", agent.ID).Count(&referralCount)
 		
+		// ✅ Escape special characters for Markdown
+		username := escapeMarkdown(agent.Username)
+		
 		text += fmt.Sprintf(
 			"%d. @%s\n"+
 			"   💰 Commission: %.2f ETB\n"+
 			"   👥 Referrals: %d\n\n",
 			i+1,
-			agent.Username,
+			username,
 			agent.AgentBalance,
 			referralCount,
 		)
