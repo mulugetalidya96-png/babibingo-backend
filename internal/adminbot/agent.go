@@ -13,6 +13,10 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	pendingPageSize = 10
+)
+
 // ============ AGENT MANAGEMENT HANDLER ============
 
 func (b *Bot) handleAgents(ctx context.Context, chatID int64, args []string) {
@@ -26,17 +30,15 @@ func (b *Bot) handleAgents(ctx context.Context, chatID int64, args []string) {
 		b.showAgentsMenu(ctx, chatID)
 		
 	case "pending":
-		b.showPendingAgents(ctx, chatID)
+		b.showPendingAgents(ctx, chatID, 1) // Start from page 1
 		
 	case "all":
 		b.showAllAgents(ctx, chatID)
 		
 	case "add":
-		// Flow: /agents add -> search user -> add as agent
 		b.handleAddAgentFlow(ctx, chatID)
 		
 	case "remove":
-		// Flow: /agents remove -> search user -> remove agent status
 		if len(args) > 1 {
 			query := strings.Join(args[1:], " ")
 			b.handleRemoveAgentSearch(ctx, chatID, query)
@@ -118,7 +120,7 @@ func (b *Bot) showAgentsMenu(ctx context.Context, chatID int64) {
 			{Text: "➖ Remove Agent", CallbackData: "agents_remove"},
 		},
 		{
-			{Text: "📋 Pending Requests", CallbackData: "agents_pending"},
+			{Text: "📋 Pending Requests", CallbackData: "agents_pending_1"},
 			{Text: "👥 All Agents", CallbackData: "agents_all"},
 		},
 		{
@@ -562,13 +564,17 @@ func (b *Bot) searchAgents(ctx context.Context, chatID int64, query string) {
 	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
 }
 
-// ============ PENDING AGENTS ============
+// ============ PENDING AGENTS WITH PAGINATION ============
 
-func (b *Bot) showPendingAgents(ctx context.Context, chatID int64) {
-	var requests []AgentRequest
-	b.db.Where("status = ?", "pending").Order("created_at ASC").Find(&requests)
+func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
+	if page < 1 {
+		page = 1
+	}
 
-	if len(requests) == 0 {
+	var totalRequests int64
+	b.db.Model(&AgentRequest{}).Where("status = ?", "pending").Count(&totalRequests)
+
+	if totalRequests == 0 {
 		text := "📋 *No Pending Applications*\n\n" +
 			"All agent applications have been reviewed."
 		
@@ -580,14 +586,26 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64) {
 		return
 	}
 
-	// Show only first 10 requests with pagination
-	limit := 10
-	
-	
-	text := fmt.Sprintf("📋 *Pending Applications*\n\nTotal: %d\n\n", len(requests))
-	
-	for i := 0; i < len(requests) && i < limit; i++ {
-		req := requests[i]
+	// Calculate total pages
+	totalPages := int((totalRequests + int64(pendingPageSize) - 1) / int64(pendingPageSize))
+	if page > totalPages {
+		page = totalPages
+	}
+
+	offset := (page - 1) * pendingPageSize
+
+	var requests []AgentRequest
+	b.db.Where("status = ?", "pending").
+		Order("created_at DESC").
+		Limit(pendingPageSize).
+		Offset(offset).
+		Find(&requests)
+
+	text := fmt.Sprintf("📋 *Pending Applications*\n\n"+
+		"📊 Total: %d | Page %d/%d\n\n",
+		totalRequests, page, totalPages)
+
+	for _, req := range requests {
 		text += fmt.Sprintf(
 			"📌 #%d\n"+
 			"👤 @%s\n"+
@@ -601,24 +619,61 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64) {
 			req.CreatedAt.Format("Jan 2, 2006 15:04"),
 		)
 	}
-	
-	if len(requests) > limit {
-		text += fmt.Sprintf("... and %d more pending requests.\n\n", len(requests)-limit)
-	}
-	
-	// Create inline keyboard with action buttons
+
+	// Create pagination buttons
 	var keyboard [][]telego.InlineKeyboardButton
 	
-	// Add action buttons for the first request (or a selection mechanism)
+	// Navigation row
+	var navRow []telego.InlineKeyboardButton
+	
+	if page > 1 {
+		navRow = append(navRow, telego.InlineKeyboardButton{
+			Text: "⬅️ Previous",
+			CallbackData: fmt.Sprintf("agents_pending_%d", page-1),
+		})
+	}
+	
+	if page < totalPages {
+		navRow = append(navRow, telego.InlineKeyboardButton{
+			Text: "Next ➡️",
+			CallbackData: fmt.Sprintf("agents_pending_%d", page+1),
+		})
+	}
+	
+	if len(navRow) > 0 {
+		keyboard = append(keyboard, navRow)
+	}
+	
+	// Add action buttons for the first request on the page (or show more options)
 	if len(requests) > 0 {
-		req := requests[0]
-		keyboard = append(keyboard, []telego.InlineKeyboardButton{
-			{Text: "✅ Approve", CallbackData: fmt.Sprintf("agents_approve_%d", req.ID)},
-			{Text: "❌ Reject", CallbackData: fmt.Sprintf("agents_reject_%d", req.ID)},
-		})
-		keyboard = append(keyboard, []telego.InlineKeyboardButton{
-			{Text: "👤 View Details", CallbackData: fmt.Sprintf("agents_view_%d", req.ID)},
-		})
+		var actionRow []telego.InlineKeyboardButton
+		
+		// Only show approve/reject for the first request to keep it clean
+		// Or you could show for all with more compact buttons
+		for i, req := range requests {
+			if i >= 3 { // Limit to 3 requests with quick actions
+				break
+			}
+			actionRow = append(actionRow, telego.InlineKeyboardButton{
+				Text: fmt.Sprintf("✅ #%d", req.ID),
+				CallbackData: fmt.Sprintf("agents_approve_%d", req.ID),
+			})
+			actionRow = append(actionRow, telego.InlineKeyboardButton{
+				Text: fmt.Sprintf("❌ #%d", req.ID),
+				CallbackData: fmt.Sprintf("agents_reject_%d", req.ID),
+			})
+		}
+		if len(actionRow) > 0 {
+			keyboard = append(keyboard, actionRow)
+		}
+		
+		// View details button for first request
+		if len(requests) > 0 {
+			keyboard = append(keyboard, []telego.InlineKeyboardButton{
+				{Text: fmt.Sprintf("👤 View #%d Details", requests[0].ID), 
+				 CallbackData: fmt.Sprintf("agents_view_%d", requests[0].ID)},
+			})
+		}
 	}
 	
 	keyboard = append(keyboard, []telego.InlineKeyboardButton{
@@ -627,6 +682,7 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64) {
 	
 	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
 }
+
 // ============ ALL AGENTS ============
 
 func (b *Bot) showAllAgents(ctx context.Context, chatID int64) {
@@ -647,29 +703,29 @@ func (b *Bot) showAllAgents(ctx context.Context, chatID int64) {
 
 	text := fmt.Sprintf("👥 *All Agents*\n\nTotal: %d\n\n", len(agents))
 	
-for i, agent := range agents {
-    if i >= 15 {
-        text += fmt.Sprintf("... and %d more\n", len(agents)-15)
-        break
-    }
-    
-    var referralCount int64
-    b.db.Model(&models.User{}).Where("referred_by = ?", agent.ID).Count(&referralCount)
-    
-    text += fmt.Sprintf(
-        "%d. @%s\n"+
-        "   💰 Agent Balance: %.2f ETB\n"+
-        "   👥 Referrals: %d\n"+
-        "   📱 %s\n"+
-        "   🆔 `%d`\n\n",
-        i+1,
-        agent.Username,
-        agent.AgentBalance,
-        referralCount,
-        formatPhoneNumber(agent.PhoneNumber),
-        agent.TelegramID,
-    )
-}
+	for i, agent := range agents {
+		if i >= 15 {
+			text += fmt.Sprintf("... and %d more\n", len(agents)-15)
+			break
+		}
+		
+		var referralCount int64
+		b.db.Model(&models.User{}).Where("referred_by = ?", agent.ID).Count(&referralCount)
+		
+		text += fmt.Sprintf(
+			"%d. @%s\n"+
+			"   💰 Agent Balance: %.2f ETB\n"+
+			"   👥 Referrals: %d\n"+
+			"   📱 %s\n"+
+			"   🆔 `%d`\n\n",
+			i+1,
+			agent.Username,
+			agent.AgentBalance,
+			referralCount,
+			formatPhoneNumber(agent.PhoneNumber),
+			agent.TelegramID,
+		)
+	}
 	
 	keyboard := [][]telego.InlineKeyboardButton{
 		{
@@ -830,7 +886,7 @@ func (b *Bot) viewAgent(ctx context.Context, chatID int64, requestID uint) {
 	
 	keyboard := [][]telego.InlineKeyboardButton{
 		{
-			{Text: "🔙 Back to Pending", CallbackData: "agents_pending"},
+			{Text: "🔙 Back to Pending", CallbackData: "agents_pending_1"},
 			{Text: "🔙 Back to Menu", CallbackData: "agents_menu"},
 		},
 	}
@@ -937,7 +993,6 @@ func (b *Bot) showAgentCommissions(ctx context.Context, chatID int64) {
 
 // ============ CALLBACK HANDLERS FOR AGENTS ============
 
-// Add these to your callback.go file
 func (b *Bot) handleAgentCallbacks(ctx context.Context, query *telego.CallbackQuery) {
 	data := query.Data
 	chatID := query.Message.GetChat().ID
@@ -964,7 +1019,13 @@ func (b *Bot) handleAgentCallbacks(ctx context.Context, query *telego.CallbackQu
 			b.handleRemoveAgentFlow(ctx, chatID)
 			
 		case "pending":
-			b.showPendingAgents(ctx, chatID)
+			page := 1
+			if len(parts) > 2 {
+				if p, err := strconv.Atoi(parts[2]); err == nil {
+					page = p
+				}
+			}
+			b.showPendingAgents(ctx, chatID, page)
 			
 		case "all":
 			b.showAllAgents(ctx, chatID)
@@ -982,12 +1043,16 @@ func (b *Bot) handleAgentCallbacks(ctx context.Context, query *telego.CallbackQu
 			if len(parts) > 2 {
 				id, _ := strconv.Atoi(parts[2])
 				b.approveAgent(ctx, chatID, uint(id))
+				// Refresh pending list after action
+				b.showPendingAgents(ctx, chatID, 1)
 			}
 			
 		case "reject":
 			if len(parts) > 2 {
 				id, _ := strconv.Atoi(parts[2])
 				b.rejectAgent(ctx, chatID, uint(id))
+				// Refresh pending list after action
+				b.showPendingAgents(ctx, chatID, 1)
 			}
 			
 		case "view":
@@ -1013,7 +1078,6 @@ func (b *Bot) handleAgentCallbacks(ctx context.Context, query *telego.CallbackQu
 
 // ============ HANDLE AGENT TEXT INPUT ============
 
-// Add to your message handler
 func (b *Bot) handleAgentTextInput(ctx context.Context, chatID int64, text string) {
 	if state, ok := b.tempState.Load(chatID); ok {
 		stateStr := state.(string)
