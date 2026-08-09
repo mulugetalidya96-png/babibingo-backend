@@ -567,7 +567,6 @@ func (b *Bot) searchAgents(ctx context.Context, chatID int64, query string) {
 // ============ PENDING AGENTS WITH PAGINATION ============
 
 // ============ PENDING AGENTS WITH PAGINATION ============
-
 func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 	log.Printf("📋 Showing pending agents - Page %d", page)
 
@@ -617,22 +616,26 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 
 	log.Printf("📊 Fetched %d requests for page %d", len(requests), page)
 
-	// ✅ Build text without markdown issues - use plain text with emojis
-	text := fmt.Sprintf("📋 PENDING APPLICATIONS\n\n" +
+	// Build text with Markdown
+	text := fmt.Sprintf("📋 *Pending Applications*\n\n"+
 		"📊 Total: %d | Page %d/%d\n\n",
 		totalRequests, page, totalPages)
 
 	for _, req := range requests {
+		// Escape special characters for Markdown
+		username := escapeMarkdown(req.Username)
+		phone := escapeMarkdown(formatPhoneNumber(req.PhoneNumber))
+		
 		text += fmt.Sprintf(
 			"📌 #%d\n"+
 			"👤 @%s\n"+
-			"🆔 %d\n"+
+			"🆔 `%d`\n"+
 			"📱 %s\n"+
 			"📅 %s\n\n",
 			req.ID,
-			req.Username,
+			username,
 			req.UserID,
-			formatPhoneNumber(req.PhoneNumber),
+			phone,
 			req.CreatedAt.Format("Jan 2, 2006 15:04"),
 		)
 	}
@@ -693,20 +696,33 @@ func (b *Bot) showPendingAgents(ctx context.Context, chatID int64, page int) {
 		{Text: "🔙 Back to Agents", CallbackData: "agents_menu"},
 	})
 	
-	// ✅ Use HTML parse mode instead of Markdown
-	msg := telego.SendMessageParams{
-		ChatID: telego.ChatID{ID: chatID},
-		Text: text,
-		ParseMode: "HTML",
-		ReplyMarkup: &telego.InlineKeyboardMarkup{
-			InlineKeyboard: keyboard,
-		},
-	}
-	
-	if _, err := b.api.SendMessage(ctx, &msg); err != nil {
-		log.Printf("❌ Failed to send pending agents message: %v", err)
-		b.sendText(ctx, chatID, "❌ Failed to display pending agents.")
-	}
+	// Use the existing sendMarkdownKeyboard function
+	b.sendMarkdownKeyboard(ctx, chatID, text, keyboard)
+}
+
+// escapeMarkdown escapes special characters for Telegram Markdown
+func escapeMarkdown(text string) string {
+	replacer := strings.NewReplacer(
+		"_", "\\_",
+		"*", "\\*",
+		"`", "\\`",
+		"[", "\\[",
+		"]", "\\]",
+		"(", "\\(",
+		")", "\\)",
+		"~", "\\~",
+		">", "\\>",
+		"#", "\\#",
+		"+", "\\+",
+		"-", "\\-",
+		"=", "\\=",
+		"|", "\\|",
+		"{", "\\{",
+		"}", "\\}",
+		".", "\\.",
+		"!", "\\!",
+	)
+	return replacer.Replace(text)
 }
 
 // ============ ALL AGENTS ============
